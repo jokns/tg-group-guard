@@ -7,7 +7,7 @@ import base64
 import io
 from functools import wraps
 from datetime import datetime, timedelta
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, abort
 from app.database import get_conn, get_setting, set_setting
 from app.config import Config
 from app.audit import audit
@@ -17,6 +17,24 @@ import qrcode
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.secret_key = os.getenv("WEB_SECRET", secrets.token_hex(32))
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
+# 生产环境建议在 .env 中设置 WEB_SECRET，并使用 HTTPS。
+
+@app.context_processor
+def inject_csrf():
+    if '_csrf_token' not in session:
+        session['_csrf_token'] = secrets.token_urlsafe(32)
+    return {'csrf_token': session['_csrf_token']}
+
+@app.before_request
+def protect_state_changes():
+    if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        return
+    expected = session.get('_csrf_token', '')
+    supplied = request.headers.get('X-CSRF-Token', '') or request.form.get('_csrf_token', '')
+    if not expected or not supplied or not secrets.compare_digest(expected, supplied):
+        abort(403, description='CSRF 校验失败，请刷新页面后重试')
+
 
 # 注入版本号到所有模板
 @app.context_processor
@@ -44,7 +62,9 @@ def _load_admin_password_hash():
         logger.info("Migrated admin password from plaintext to werkzeug hash")
         return h
     # 最后 fallback 到环境变量（首次启动）
-    env_pwd = os.getenv("ADMIN_PASSWORD", "admin")
+    env_pwd = os.getenv("ADMIN_PASSWORD", "")
+    if not env_pwd or env_pwd == "admin":
+        raise RuntimeError("首次部署必须在 .env 设置强 ADMIN_PASSWORD（不能使用 admin）")
     h = generate_password_hash(env_pwd)
     set_setting("admin_password_hash", h)
     return h
@@ -68,9 +88,9 @@ def verify_password(pwd: str) -> bool:
 
 def get_client_ip():
     """获取真实客户端 IP（支持反向代理）"""
-    if request.headers.get("X-Forwarded-For"):
+    if request.remote_addr in ("127.0.0.1", "::1") and request.headers.get("X-Forwarded-For"):
         return request.headers.get("X-Forwarded-For").split(",")[0].strip()
-    if request.headers.get("X-Real-Ip"):
+    if request.remote_addr in ("127.0.0.1", "::1") and request.headers.get("X-Real-Ip"):
         return request.headers.get("X-Real-Ip").strip()
     return request.remote_addr
 
@@ -700,4 +720,5 @@ def api_stats():
     return {"verified": verified, "violations": violations, "pending_verify": pending}
 
 def run_web(host="0.0.0.0", port=8080):
-    app.run(host=host, port=port, debug=False, use_reloader=False)
+    from waitress import serve
+    serve(app, host=host, port=port, threads=8)

@@ -47,6 +47,7 @@
                         <td class="text-muted">{{ row.last_attempt }}</td>
                         <td>
                             <form method="POST" action="{{ url_for('unlock_ip', ip=row.ip) }}" style="display:inline;" onsubmit="return confirm('确定解锁 IP {{ row.ip }} 吗？');">
+<input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
                                 <button type="submit" class="btn btn-sm btn-outline-success">解锁</button>
                             </form>
                         </td>

@@ -9,11 +9,12 @@
     </div>
     <div class="card-body">
         <form method="POST">
+<input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
             <div class="row">
                 <div class="col-md-6 mb-3">
                     <label class="form-label">Bot Token</label>
                     <div class="input-group">
-                        <input type="password" name="bot_token" id="bot_token" class="form-control" value="{{ config.BOT_TOKEN }}" placeholder="输入 Bot Token">
+                        <input type="password" name="bot_token" id="bot_token" class="form-control" value="" autocomplete="off" placeholder="Token 请在服务器 .env 中配置">
                         <button class="btn btn-outline-secondary" type="button" onclick="toggleVisible('bot_token', this)" title="显示/隐藏">
                             <i class="bi bi-eye"></i>
                         </button>

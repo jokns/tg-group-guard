@@ -6,6 +6,23 @@
 {% for key,name in [('system','系统'),('web_admin','Web 管理'),('tg_admin','TG 管理')] %}
 <a class="btn btn-sm btn-outline-primary" href="{{ url_for('audit_page',category=key) }}">{{ name }}</a>{% endfor %}</div>
 <div class="table-responsive"><table class="table table-striped table-sm"><thead><tr><th>时间（UTC）</th><th>类型</th><th>操作者</th><th>操作</th><th>对象</th><th>备注</th></tr></thead><tbody>
-{% for r in rows %}<tr><td>{{ datetime.utcfromtimestamp(r['created_at']).strftime('%Y-%m-%d %H:%M:%S') }}</td><td>{{ r['category'] }}</td><td>{{ r['actor'] }}</td><td>{{ r['action'] }}</td><td>{{ r['target'] }}</td><td>{{ r['detail'] }}</td></tr>{% else %}<tr><td colspan="6">暂无记录</td></tr>{% endfor %}
+{% set category_names = {'system':'系统日志','web_admin':'网页管理员','tg_admin':'TG 管理员'} %}
+{% set action_names = {
+ 'query_user':'查询用户', 'reset_warnings':'重置警告次数',
+ 'web_login_success':'管理员登录成功', 'web_login_failed':'管理员登录失败',
+ 'web_logout':'管理员退出登录', 'end_observation':'提前解除观察期',
+ 'release_observation':'提前解除观察期', 'settings_changed':'修改系统设置',
+ 'settings_update':'修改系统设置', 'verify_started':'开始入群验证',
+ 'verify_passed':'入群验证通过', 'verify_timeout':'入群验证超时',
+ 'verify_failed':'入群验证失败', 'ban_user':'封禁用户',
+ 'unban_user':'解除封禁', 'delete_message':'删除违规消息',
+ 'panel_open':'打开管理面板', 'admin_panel_open':'打开管理面板',
+ 'guarduser':'查询用户', 'guardchats':'查看管理群组',
+ 'view_stats':'查看统计', 'unlock_ip':'解锁登录 IP',
+ 'add_keyword':'添加违禁词', 'delete_keyword':'删除违禁词',
+ 'toggle_keyword':'切换违禁词状态', 'add_auto_reply':'添加自动回复',
+ 'delete_auto_reply':'删除自动回复', 'toggle_auto_reply':'切换自动回复状态'
+} %}
+{% for r in rows %}<tr><td>{{ datetime.utcfromtimestamp(r['created_at']).strftime('%Y-%m-%d %H:%M:%S') }}</td><td>{{ category_names.get(r['category'], r['category']) }}</td><td>{{ r['actor'] }}</td><td>{{ action_names.get(r['action'], r['action']) }}</td><td>{{ r['target'] }}</td><td>{{ r['detail'] }}</td></tr>{% else %}<tr><td colspan="6">暂无记录</td></tr>{% endfor %}
 </tbody></table></div>
 {% endblock %}
