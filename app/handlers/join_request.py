@@ -59,14 +59,22 @@ async def restrict_new_member(chat_id: int, user_id: int, context: ContextTypes.
             user_id=user_id,
             permissions=ChatPermissions(
                 can_send_messages=False,
-                can_send_media_messages=False,
+                can_send_audios=False,
+                can_send_documents=False,
+                can_send_photos=False,
+                can_send_videos=False,
+                can_send_video_notes=False,
+                can_send_voice_notes=False,
+                can_send_polls=False,
                 can_send_other_messages=False,
                 can_add_web_page_previews=False,
-            )
+            ),
+            use_independent_chat_permissions=True,
         )
+        logger.info("New member restricted: chat=%s user=%s", chat_id, user_id)
         return True
     except Exception as e:
-        logger.warning(f"Restrict new member failed: {e}")
+        logger.exception("Restrict new member failed: chat=%s user=%s: %s", chat_id, user_id, e)
         return False
 
 async def unrestrict_member(chat_id: int, user_id: int, context: ContextTypes.DEFAULT_TYPE):
@@ -185,6 +193,7 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # 先限制权限（禁言）；失败则踢出，防止未经验证的账号发广告。
     if not await restrict_new_member(chat.id, user.id, context):
+        logger.error("Cannot safely start verification without mute; removing member chat=%s user=%s", chat.id, user.id)
         await kick_member(chat.id, user.id, context)
         return
     from app.database import get_setting
@@ -240,6 +249,7 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         conn.execute("UPDATE direct_join_verifications SET message_id=? WHERE chat_id=? AND user_id=? AND session_id=?",
                      (msg.message_id,chat.id,user.id,session_id))
         conn.commit();conn.close()
+        logger.info("Direct join verification sent: chat=%s user=%s session=%s ttl=%s", chat.id, user.id, session_id, ttl)
         context.job_queue.run_once(auto_kick,when=ttl,
             data={'user_id':user.id,'chat_id':chat.id,'session_id':session_id,'message_id':msg.message_id},
             name=f'verify_{session_id}')
