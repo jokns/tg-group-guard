@@ -16,26 +16,36 @@ def observing(chat_id,user_id):
     conn=get_conn();r=conn.execute('SELECT until_ts FROM member_observation WHERE chat_id=? AND user_id=?',(chat_id,user_id)).fetchone();conn.close()
     return bool(r and r['until_ts']>time.time())
 
-def _ocr_sync(data):
+def _ocr_sync(data, smart=True):
     global _OCR
     from rapidocr_onnxruntime import RapidOCR
-    from PIL import Image
+    from PIL import Image, ImageOps
+    from app.handlers.smart_ocr import candidates, crops
     if _OCR is None:_OCR=RapidOCR()
-    image=Image.open(io.BytesIO(data)).convert('RGB')
-    # Small banner and emoji-like ad text: upscale before OCR, within a fixed budget.
-    from PIL import ImageOps, ImageEnhance
+    image=Image.open(io.BytesIO(data))
+    image=ImageOps.exif_transpose(image)
+    # 解压炸弹与异常大图：限制像素和实际处理尺寸
+    if image.width * image.height > 20_000_000:
+        raise ValueError('图片像素超过安全上限')
+    image=image.convert('RGB')
     image.thumbnail((1400,1400))
-    if max(image.size) < 800:
-        scale=min(4, 1400/max(image.size))
+    if max(image.size)<800:
+        scale=min(4,1400/max(image.size))
         image=image.resize((max(1,int(image.width*scale)),max(1,int(image.height*scale))),Image.Resampling.LANCZOS)
-    import numpy as np
     result,_=_OCR(np.asarray(image))
-    return ' '.join(item[1] for item in (result or []))
+    original=' '.join(str(item[1]) for item in (result or []) if len(item)>1)
+    if not smart:return [original] if original else []
+    found=candidates(result)
+    if original and original not in found:found.insert(0,original)
+    return found[:48],image
+
 
 def _hash_sync(data):
     from PIL import Image
     import imagehash
-    im=Image.open(io.BytesIO(data)).convert('RGB');im.thumbnail((1200,1200))
+    im=Image.open(io.BytesIO(data));
+    if im.width*im.height>20_000_000:raise ValueError('图片像素超过安全上限')
+    im=im.convert('RGB');im.thumbnail((1200,1200))
     return str(imagehash.phash(im))
 
 def _similar(chat_id,hashstr):
@@ -68,9 +78,47 @@ async def check_media(update,ctx,chat_id,user_id):
             if h and await asyncio.to_thread(_similar,chat_id,h):return '重复或相似的已知广告图片'
             spam=False;reason=''
             if flag('ocr_enabled'):
-                ocr_text=await asyncio.to_thread(_ocr_sync,raw)
                 from app.handlers.group_messages import is_spam
-                spam,reason=is_spam(ocr_text)
+                from app.handlers.smart_ocr import normalize,crops,candidates
+                smart=flag('smart_ocr_enabled','1')
+                if smart:
+                    recognized,image=await asyncio.to_thread(_ocr_sync,raw,True)
+                else:
+                    recognized=await asyncio.to_thread(_ocr_sync,raw,False)
+                # 原文优先，随后尝试按坐标拼接的候选；归一化仅对明确的自定义关键词生效
+                from app.handlers.group_messages import get_blocked_keywords,record_keyword_hit
+                keywords=get_blocked_keywords() if smart else []
+                for text in recognized:
+                    spam,reason=await asyncio.to_thread(is_spam,text)
+                    if not spam and smart:
+                        clean=normalize(text)
+                        for kw in keywords:
+                            if len(normalize(kw))>=3 and normalize(kw) in clean:
+                                spam=True;reason='智能拼接关键词：'+kw
+                                await asyncio.to_thread(record_keyword_hit,kw)
+                                break
+                    if spam:break
+                if smart and not spam:
+                    # 仅在首次未命中时进行最多 4 次分块 OCR，避免常规图片的额外开销
+                    def _crop_ocr():
+                        out=[]
+                        for part in crops(image):
+                            try:
+                                result,_=_OCR(np.asarray(part))
+                                out.extend(candidates(result)[:12])
+                            except Exception:
+                                log.exception('智能 OCR 分块识别失败')
+                        return out[:48]
+                    for text in await asyncio.to_thread(_crop_ocr):
+                        spam,reason=await asyncio.to_thread(is_spam,text)
+                        if not spam:
+                            clean=normalize(text)
+                            for kw in keywords:
+                                if len(normalize(kw))>=3 and normalize(kw) in clean:
+                                    spam=True;reason='智能拼接关键词：'+kw
+                                    await asyncio.to_thread(record_keyword_hit,kw)
+                                    break
+                        if spam:break
                 if spam:reason='图片 OCR：'+reason
             if h:await asyncio.to_thread(_remember,chat_id,h,spam)
             return reason if spam else ''

@@ -72,7 +72,7 @@
             <hr class="my-4">
             <h6 class="mb-3">🛡️ 入群验证与图片审核（中文 Web 配置）</h6>
             <div class="alert alert-info">可选择两种模式：开启“批准新成员”时，申请人先私聊验证后批准；不开启时，新成员进入群后立即尝试禁言，点击群内按钮前往机器人私聊验证，成功解除禁言，超时移出。机器人必须有管理入群申请、限制成员、封禁成员、删除消息权限。直接入群的禁言存在 Telegram 更新延迟，不能保证零窗口。</div>
-            {% for key,label in [('join_approval_enabled','启用申请入群验证（需群开启批准新成员）'),('direct_join_verify_enabled','启用直接入群禁言 → 私聊验证 → 解禁'),('ocr_enabled','本地 RapidOCR 图片文字识别'),('image_hash_enabled','图片感知哈希相似广告拦截'),('observation_enabled','启用新成员观察期'),('observation_block_images','观察期禁止图片'),('observation_block_links','观察期禁止链接')] %}
+            {% for key,label in [('join_approval_enabled','启用申请入群验证（需群开启批准新成员）'),('direct_join_verify_enabled','启用直接入群禁言 → 私聊验证 → 解禁'),('ocr_enabled','本地 RapidOCR 图片文字识别'),('smart_ocr_enabled','智能拼接 OCR（空间排序、文本归一化、分块复检；增加 CPU 消耗）'),('image_hash_enabled','图片感知哈希相似广告拦截'),('observation_enabled','启用新成员观察期'),('observation_block_images','观察期禁止图片'),('observation_block_links','观察期禁止链接')] %}
             <div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" name="{{ key }}" id="{{ key }}" {% if guard_settings[key]=='1' %}checked{% endif %}><label class="form-check-label" for="{{ key }}">{{ label }}</label></div>
             {% endfor %}
             <div class="row mt-3">

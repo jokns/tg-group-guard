@@ -390,7 +390,7 @@ def settings():
         set_setting("max_warnings", max_warnings)
         audit("web_admin",get_client_ip(),"settings_changed")
         set_setting("mute_duration", mute_duration)
-        for key in ('direct_join_verify_enabled','join_approval_enabled','ocr_enabled','image_hash_enabled','observation_enabled','observation_block_images','observation_block_links'):
+        for key in ('direct_join_verify_enabled','join_approval_enabled','ocr_enabled','smart_ocr_enabled','image_hash_enabled','observation_enabled','observation_block_images','observation_block_links'):
             set_setting(key, '1' if data.get(key) else '0')
         for key,default,minimum,maximum in (('direct_verify_timeout',300,60,900),('join_approval_timeout',300,60,900),('observation_hours',24,0,720),('image_hash_distance',6,0,16)):
             raw=data.get(key,str(default))
