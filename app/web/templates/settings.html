@@ -66,8 +66,21 @@
                 <div class="form-text">白名单用户发送的消息豁免违禁词、链接等内容过滤（防刷屏仍生效，但不封禁）。多个用英文逗号分隔。</div>
             </div>
 
-            <hr class="my-4">
 
+
+            <hr class="my-4">
+            <h6 class="mb-3">🛡️ 入群验证与图片审核（中文 Web 配置）</h6>
+            <div class="alert alert-info">可选择两种模式：开启“批准新成员”时，申请人先私聊验证后批准；不开启时，新成员进入群后立即尝试禁言，点击群内按钮前往机器人私聊验证，成功解除禁言，超时移出。机器人必须有管理入群申请、限制成员、封禁成员、删除消息权限。直接入群的禁言存在 Telegram 更新延迟，不能保证零窗口。</div>
+            {% for key,label in [('join_approval_enabled','启用申请入群验证（需群开启批准新成员）'),('direct_join_verify_enabled','启用直接入群禁言 → 私聊验证 → 解禁'),('ocr_enabled','本地 RapidOCR 图片文字识别'),('image_hash_enabled','图片感知哈希相似广告拦截'),('observation_enabled','启用新成员观察期'),('observation_block_images','观察期禁止图片'),('observation_block_links','观察期禁止链接')] %}
+            <div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" name="{{ key }}" id="{{ key }}" {% if guard_settings[key]=='1' %}checked{% endif %}><label class="form-check-label" for="{{ key }}">{{ label }}</label></div>
+            {% endfor %}
+            <div class="row mt-3">
+              <div class="col-md-4 mb-3"><label class="form-label">申请入群验证有效期（秒）</label><input class="form-control" type="number" min="60" max="900" name="join_approval_timeout" value="{{ guard_settings.join_approval_timeout }}"></div>
+              <div class="col-md-4 mb-3"><label class="form-label">直接入群验证超时（秒）</label><input class="form-control" type="number" min="60" max="900" name="direct_verify_timeout" value="{{ guard_settings.direct_verify_timeout }}"></div>
+              <div class="col-md-4 mb-3"><label class="form-label">观察期（小时）</label><input class="form-control" type="number" min="0" max="720" name="observation_hours" value="{{ guard_settings.observation_hours }}"></div>
+              <div class="col-md-4 mb-3"><label class="form-label">图片哈希距离（0-16）</label><input class="form-control" type="number" min="0" max="16" name="image_hash_distance" value="{{ guard_settings.image_hash_distance }}"></div>
+            </div>
+            <hr class="my-4">
             <h6 class="mb-3"><i class="bi bi-shield-lock me-2"></i>二步验证 (2FA)</h6>
             <div class="mb-3" id="totp-section">
                 {% if totp_enabled %}
@@ -140,8 +153,6 @@
                 {% endif %}
             </div>
 
-            <hr class="my-4">
-
             <h6 class="mb-3"><i class="bi bi-chat-dots me-2"></i>入群欢迎语</h6>
             <div class="mb-3">
                 <label class="form-label">欢迎语内容</label>
@@ -160,8 +171,6 @@
                 <input type="number" name="welcome_delete_delay" class="form-control" value="{{ welcome_delete_delay }}" min="0" max="3600">
                 <div class="form-text">设置为 0 则不自动删除，默认 60 秒</div>
             </div>
-
-            <hr class="my-4">
 
             <h6 class="mb-3"><i class="bi bi-link-45deg me-2"></i>链接/广告过滤</h6>
             <div class="row">
@@ -186,8 +195,6 @@
                     </div>
                 </div>
             </div>
-
-            <hr class="my-4">
 
             <h6 class="mb-3"><i class="bi bi-shield-fill-exclamation me-2"></i>防刷屏</h6>
             <div class="row">

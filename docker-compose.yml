@@ -1,10 +1,10 @@
 services:  # 定义服务
   bot:  # 服务名称为 bot
-    image: ywsj/tg-group-guard:latest  # 使用你上传到 Docker Hub 的镜像
+    build: .  # 必须从当前修改后的源码构建，不使用旧的远程镜像
     container_name: tg-group-guard  # 容器名称
     restart: always  # 容器重启策略，总是重启
     ports:  # 映射端口
-      - "8181:8080"  # 将宿主机的 8181 端口映射到容器的 8080 端口
+      - "127.0.0.1:18081:8080"  # 将宿主机的 18081 端口映射到容器的 8080 端口
     volumes:  # 挂载数据卷
       - ./data:/data  # 将当前目录下的 data 文件夹挂载到容器的 /data
     env_file:

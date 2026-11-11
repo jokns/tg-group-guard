@@ -332,6 +332,13 @@ def settings():
         set_setting("verify_timeout", verify_timeout)
         set_setting("max_warnings", max_warnings)
         set_setting("mute_duration", mute_duration)
+        for key in ('direct_join_verify_enabled','join_approval_enabled','ocr_enabled','image_hash_enabled','observation_enabled','observation_block_images','observation_block_links'):
+            set_setting(key, '1' if data.get(key) else '0')
+        for key,default,minimum,maximum in (('direct_verify_timeout',300,60,900),('join_approval_timeout',300,60,900),('observation_hours',24,0,720),('image_hash_distance',6,0,16)):
+            raw=data.get(key,str(default))
+            try: value=max(minimum,min(maximum,int(raw)))
+            except (TypeError,ValueError):value=default
+            set_setting(key,str(value))
         # 保存欢迎语到数据库（即时生效）
         welcome_msg = data.get("welcome_message", "").strip()
         set_setting("welcome_message", welcome_msg)
@@ -413,6 +420,10 @@ def settings():
                            user_whitelist=user_whitelist,
                            verify_timeout=db_verify_timeout, max_warnings=db_max_warnings,
                            mute_duration=db_mute_duration,
+                           guard_settings={key:get_setting(key,default) for key,default in {
+                             'direct_join_verify_enabled':'1','direct_verify_timeout':'300','join_approval_enabled':'1','join_approval_timeout':'300','ocr_enabled':'1',
+                             'image_hash_enabled':'1','image_hash_distance':'6','observation_enabled':'1',
+                             'observation_hours':'24','observation_block_images':'1','observation_block_links':'1'}.items()},
                            totp_enabled=totp_enabled, totp_pending=totp_pending,
                            totp_qr=totp_qr, totp_secret_display=totp_secret_display)
 

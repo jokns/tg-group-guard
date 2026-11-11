@@ -194,6 +194,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = update.message.text or update.message.caption or ""
     
+    # 图片审核与观察期限制（管理员/白名单豁免）
+    if not is_admin:
+        from app.handlers.media_guard import check_media
+        media_reason = await check_media(update, context, chat_id, user.id)
+    else:
+        media_reason = ''
+
     # 防刷屏检查
     flood_flag, flood_reason = check_antiflood(chat_id, user.id)
     if flood_flag:
@@ -205,6 +212,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_spam_flag, reason = False, ""
     else:
         is_spam_flag, reason = is_spam(text)
+        if media_reason:
+            is_spam_flag, reason = True, media_reason
     if not is_spam_flag:
         # 检查自动回复
         reply = match_auto_reply(text)
@@ -311,4 +320,4 @@ async def handle_flood_violation(update: Update, context: ContextTypes.DEFAULT_T
         except Exception as e:
             logger.error(f"Warn flood user failed: {e}")
 
-message_handler = MessageHandler(filters.TEXT | filters.CAPTION, handle_message)
+message_handler = MessageHandler(filters.TEXT | filters.CAPTION | filters.PHOTO | filters.Document.IMAGE, handle_message)

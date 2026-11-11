@@ -92,6 +92,23 @@ def init_db():
     # 初始化 TOTP 配置
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("totp_secret", ""))
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("totp_enabled", "0"))
+    c.execute("""CREATE TABLE IF NOT EXISTS join_requests (
+        chat_id INTEGER NOT NULL, user_id INTEGER NOT NULL, token TEXT NOT NULL,
+        answer_hash TEXT NOT NULL, expires_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(chat_id,user_id))""")
+    c.execute("""CREATE TABLE IF NOT EXISTS member_observation (
+        chat_id INTEGER NOT NULL, user_id INTEGER NOT NULL, until_ts INTEGER NOT NULL,
+        PRIMARY KEY(chat_id,user_id))""")
+    c.execute("""CREATE TABLE IF NOT EXISTS image_fingerprints (
+        chat_id INTEGER NOT NULL, image_hash TEXT NOT NULL, is_spam INTEGER NOT NULL,
+        created_at INTEGER NOT NULL)""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_image_fingerprints ON image_fingerprints(chat_id, created_at)")
+    c.execute("""CREATE TABLE IF NOT EXISTS direct_join_verifications (
+        chat_id INTEGER NOT NULL, user_id INTEGER NOT NULL, token TEXT NOT NULL,
+        session_id INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending', message_id INTEGER,
+        PRIMARY KEY(chat_id,user_id))""")
     conn.commit()
     conn.close()
 

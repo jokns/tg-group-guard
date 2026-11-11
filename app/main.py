@@ -7,6 +7,7 @@ from app.config import Config
 from app.database import init_db
 from app.handlers.join_request import chat_member_handler, verification_callback_handler
 from app.handlers.group_messages import message_handler
+from app.handlers.join_approval import request_handler, start_handler, answer_handler, cleanup
 from app.handlers.admin_commands import get_admin_handlers
 
 logging.basicConfig(
@@ -29,7 +30,11 @@ def main():
 
     # 在主线程启动 Telegram Bot（需要信号处理器）
     application = ApplicationBuilder().token(Config.BOT_TOKEN).build()
+    application.add_handler(request_handler)
+    application.add_handler(start_handler)
+    application.add_handler(answer_handler)
     application.add_handler(chat_member_handler)
+    application.job_queue.run_repeating(cleanup, interval=60, first=30)
     application.add_handler(verification_callback_handler)
     application.add_handler(message_handler)
     for handler in get_admin_handlers():

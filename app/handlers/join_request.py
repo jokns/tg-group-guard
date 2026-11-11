@@ -1,4 +1,6 @@
 import random
+import secrets
+import time
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
 from telegram.ext import ContextTypes, ChatMemberHandler, CallbackQueryHandler
@@ -62,21 +64,17 @@ async def restrict_new_member(chat_id: int, user_id: int, context: ContextTypes.
                 can_add_web_page_previews=False,
             )
         )
+        return True
     except Exception as e:
         logger.warning(f"Restrict new member failed: {e}")
+        return False
 
 async def unrestrict_member(chat_id: int, user_id: int, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.restrict_chat_member(
             chat_id=chat_id,
             user_id=user_id,
-            permissions=ChatPermissions(
-                can_send_messages=True,
-                can_send_media_messages=True,
-                can_send_other_messages=True,
-                can_add_web_page_previews=True,
-                can_invite_users=True,
-            )
+            permissions=(await context.bot.get_chat(chat_id)).permissions or ChatPermissions(can_send_messages=True)
         )
     except Exception as e:
         logger.warning(f"Unrestrict member failed: {e}")
@@ -185,9 +183,29 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     logger.info(f"New member joined: user={user.id} chat={chat.id}")
     
-    # 先限制权限（禁言）
-    await restrict_new_member(chat.id, user.id, context)
-    
+    # 先限制权限（禁言）；失败则踢出，防止未经验证的账号发广告。
+    if not await restrict_new_member(chat.id, user.id, context):
+        await kick_member(chat.id, user.id, context)
+        return
+    from app.database import get_setting
+    if get_setting('join_approval_enabled','1') == '1':
+        # 申请入群验证通过的成员无需二次验证；非申请入群者拒绝直接进入。
+        conn = get_conn()
+        approved = conn.execute("SELECT status FROM join_requests WHERE chat_id=? AND user_id=?",(chat.id,user.id)).fetchone()
+        conn.close()
+        if approved and approved['status'] in ('approving','passed'):
+            from app.handlers.media_guard import mark_observation
+            mark_observation(chat.id,user.id)
+            await unrestrict_member(chat.id,user.id,context)
+            await send_welcome(chat.id,user,context)
+            return
+        # 未经申请批准而直接进入的成员，继续执行直接入群验证。
+
+    if get_setting('direct_join_verify_enabled','1') != '1':
+        # 无验证流程时不允许未经验证的成员停留在群中。
+        await kick_member(chat.id,user.id,context)
+        return
+
     conn = get_conn()
     c = conn.cursor()
     c.execute("INSERT INTO verification_sessions (user_id, chat_id, question, answer) VALUES (?, ?, ?, ?)",
@@ -197,28 +215,40 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
     conn.close()
     
     VERIFYING_USERS[(chat.id, user.id)] = session_id
-    
-    mention = user.mention_html()
-    text, answer, keyboard = generate_question(session_id, mention)
-    markup = InlineKeyboardMarkup(keyboard)
-    
+    # 为每次直接入群创建不可猜测的深度链接令牌；不在群里泄露答案。
+    token = secrets.token_urlsafe(16)
     try:
-        msg = await context.bot.send_message(chat_id=chat.id, text=text, reply_markup=markup, parse_mode="HTML")
-        context.job_queue.run_once(
-            auto_kick,
-            when=_get_verify_timeout(),
-            data={"user_id": user.id, "chat_id": chat.id, "session_id": session_id, "message_id": msg.message_id},
-            name=f"verify_{session_id}"
+        ttl = max(60, min(900, int(get_setting('direct_verify_timeout','300'))))
+    except ValueError:
+        ttl = 300
+    expires = int(time.time()) + ttl
+    conn = get_conn()
+    conn.execute("""INSERT INTO direct_join_verifications(chat_id,user_id,token,session_id,expires_at,status,message_id)
+        VALUES(?,?,?,?,?,'pending',NULL) ON CONFLICT(chat_id,user_id) DO UPDATE SET
+        token=excluded.token,session_id=excluded.session_id,expires_at=excluded.expires_at,
+        status='pending',message_id=NULL""", (chat.id,user.id,token,session_id,expires))
+    conn.commit(); conn.close()
+    try:
+        bot_username = (await context.bot.get_me()).username
+        link = f'https://t.me/{bot_username}?start=d_{session_id}_{token}'
+        msg = await context.bot.send_message(
+            chat_id=chat.id,
+            text=f'🛡️ {user.full_name}，你已被临时禁言。请在 {ttl} 秒内点击按钮完成私聊验证；通过后自动解除禁言，超时将被移出群组。',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔐 前往私聊验证',url=link)]])
         )
-        # 60 秒后自动删除验证消息
-        context.job_queue.run_once(
-            auto_delete_welcome,
-            when=60,
-            data={"chat_id": chat.id, "message_id": msg.message_id},
-            name=f"del_verify_{session_id}"
-        )
-    except Exception as e:
-        logger.error(f"Cannot send verification to group {chat.id}: {e}")
+        conn=get_conn()
+        conn.execute("UPDATE direct_join_verifications SET message_id=? WHERE chat_id=? AND user_id=? AND session_id=?",
+                     (msg.message_id,chat.id,user.id,session_id))
+        conn.commit();conn.close()
+        context.job_queue.run_once(auto_kick,when=ttl,
+            data={'user_id':user.id,'chat_id':chat.id,'session_id':session_id,'message_id':msg.message_id},
+            name=f'verify_{session_id}')
+    except Exception:
+        logger.exception('发送直接入群验证入口失败，移出未验证成员')
+        await kick_member(chat.id,user.id,context)
+        conn=get_conn();conn.execute("UPDATE verification_sessions SET status='failed' WHERE id=?",(session_id,))
+        conn.execute("UPDATE direct_join_verifications SET status='failed' WHERE chat_id=? AND user_id=?",(chat.id,user.id))
+        conn.commit();conn.close()
 
 async def auto_kick(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
@@ -234,6 +264,7 @@ async def auto_kick(context: ContextTypes.DEFAULT_TYPE):
     
     if row and row["status"] == "pending":
         c.execute("UPDATE verification_sessions SET status = 'timeout' WHERE id = ?", (session_id,))
+        c.execute("UPDATE direct_join_verifications SET status='timeout' WHERE session_id=? AND status='pending'", (session_id,))
         conn.commit()
         
         await kick_member(chat_id, user_id, context)
@@ -295,15 +326,27 @@ async def verification_callback(update: Update, context: ContextTypes.DEFAULT_TY
     chat_id = session["chat_id"]
     correct_answer = str(session["answer"]) if session["answer"] else ""
     
+    # 只接受仍处于有效期的直接入群私聊验证。
+    direct = c.execute("SELECT expires_at,status,message_id FROM direct_join_verifications WHERE session_id=? AND user_id=?",(session_id,user_id)).fetchone()
+    if direct and (direct['status'] != 'pending' or direct['expires_at'] < int(time.time())):
+        conn.close()
+        await query.answer('验证已过期，请重新入群',show_alert=True)
+        return
     if selected == correct_answer:
         c.execute("UPDATE verification_sessions SET status = 'passed' WHERE id = ?", (session_id,))
+        c.execute("UPDATE direct_join_verifications SET status='passed' WHERE session_id=? AND status='pending'", (session_id,))
         c.execute("INSERT OR REPLACE INTO users (user_id, username, passed_verification) VALUES (?, ?, 1)",
                   (user_id, update.effective_user.username))
         conn.commit()
         conn.close()
         
         await query.edit_message_text("✅ 验证通过！你现在可以在群里正常发言了。")
+        from app.handlers.media_guard import mark_observation
+        mark_observation(chat_id,user_id)
         await unrestrict_member(chat_id, user_id, context)
+        if direct and direct['message_id']:
+            try: await context.bot.delete_message(chat_id,direct['message_id'])
+            except Exception: pass
         # 发送群内欢迎语
         await send_welcome(chat_id, update.effective_user, context)
         VERIFYING_USERS.pop((chat_id, user_id), None)
@@ -312,23 +355,27 @@ async def verification_callback(update: Update, context: ContextTypes.DEFAULT_TY
         context.job_queue.run_once(
             auto_delete_welcome,
             when=3,
-            data={"chat_id": chat_id, "message_id": query.message.message_id},
+            data={"chat_id": query.message.chat_id, "message_id": query.message.message_id},
             name=f"del_verify_done_{session_id}"
         )
     else:
         c.execute("UPDATE verification_sessions SET status = 'failed' WHERE id = ?", (session_id,))
+        c.execute("UPDATE direct_join_verifications SET status='failed' WHERE session_id=? AND status='pending'", (session_id,))
         conn.commit()
         conn.close()
         
         await query.edit_message_text("❌ 答案错误，验证失败。你已被移出群组，可以重新加入再试。")
         await kick_member(chat_id, user_id, context)
+        if direct and direct['message_id']:
+            try: await context.bot.delete_message(chat_id,direct['message_id'])
+            except Exception: pass
         VERIFYING_USERS.pop((chat_id, user_id), None)
         # 3 秒后删除验证消息
         _cancel_del_job(context, session_id)
         context.job_queue.run_once(
             auto_delete_welcome,
             when=3,
-            data={"chat_id": chat_id, "message_id": query.message.message_id},
+            data={"chat_id": query.message.chat_id, "message_id": query.message.message_id},
             name=f"del_verify_done_{session_id}"
         )
 
