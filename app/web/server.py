@@ -479,7 +479,7 @@ def settings():
                            verify_timeout=db_verify_timeout, max_warnings=db_max_warnings,
                            mute_duration=db_mute_duration,
                            guard_settings={key:get_setting(key,default) for key,default in {
-                             'direct_join_verify_enabled':'1','direct_verify_timeout':'300','join_approval_enabled':'1','join_approval_timeout':'300','ocr_enabled':'1',
+                             'direct_join_verify_enabled':'1','direct_verify_timeout':'300','join_approval_enabled':'1','join_approval_timeout':'300','ocr_enabled':'1','smart_ocr_enabled':'1',
                              'image_hash_enabled':'1','image_hash_distance':'6','observation_enabled':'1',
                              'observation_hours':'24','observation_block_images':'1','observation_block_links':'1'}.items()},
                            totp_enabled=totp_enabled, totp_pending=totp_pending,
