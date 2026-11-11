@@ -9,6 +9,7 @@ from app.handlers.join_request import chat_member_handler, verification_callback
 from app.handlers.group_messages import message_handler
 from app.handlers.join_approval import request_handler, start_handler, answer_handler, cleanup
 from app.handlers.admin_commands import get_admin_handlers
+from app.handlers.admin_panel import handlers as admin_panel_handlers
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -37,6 +38,8 @@ def main():
     application.job_queue.run_repeating(cleanup, interval=60, first=30)
     application.add_handler(verification_callback_handler)
     application.add_handler(message_handler)
+    for handler in admin_panel_handlers:
+        application.add_handler(handler)
     for handler in get_admin_handlers():
         application.add_handler(handler)
 

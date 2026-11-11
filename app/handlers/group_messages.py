@@ -320,4 +320,4 @@ async def handle_flood_violation(update: Update, context: ContextTypes.DEFAULT_T
         except Exception as e:
             logger.error(f"Warn flood user failed: {e}")
 
-message_handler = MessageHandler(filters.TEXT | filters.CAPTION | filters.PHOTO | filters.Document.IMAGE, handle_message)
+message_handler = MessageHandler(filters.TEXT | filters.CAPTION | filters.PHOTO | filters.Document.IMAGE | filters.Sticker.STATIC, handle_message)

@@ -67,7 +67,12 @@ async def on_start(update:Update,ctx:ContextTypes.DEFAULT_TYPE):
     conn=get_conn()
     rows=conn.execute("SELECT chat_id FROM join_requests WHERE user_id=? AND status='pending' AND expires_at>?",(user_id,int(time.time()))).fetchall()
     conn.close()
-    if not rows:return
+    if not rows:
+        from app.config import Config
+        if user_id in Config.ADMIN_IDS:
+            from app.handlers.admin_panel import panel
+            await panel(update,ctx)
+        return
     for row in rows:
         text,markup=_challenge(row['chat_id'],user_id)
         await update.message.reply_text(text,reply_markup=markup)

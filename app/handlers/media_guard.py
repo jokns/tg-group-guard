@@ -21,7 +21,13 @@ def _ocr_sync(data):
     from rapidocr_onnxruntime import RapidOCR
     from PIL import Image
     if _OCR is None:_OCR=RapidOCR()
-    image=Image.open(io.BytesIO(data)).convert('RGB');image.thumbnail((1400,1400))
+    image=Image.open(io.BytesIO(data)).convert('RGB')
+    # Small banner and emoji-like ad text: upscale before OCR, within a fixed budget.
+    from PIL import ImageOps, ImageEnhance
+    image.thumbnail((1400,1400))
+    if max(image.size) < 800:
+        scale=min(4, 1400/max(image.size))
+        image=image.resize((max(1,int(image.width*scale)),max(1,int(image.height*scale))),Image.Resampling.LANCZOS)
     import numpy as np
     result,_=_OCR(np.asarray(image))
     return ' '.join(item[1] for item in (result or []))
@@ -45,13 +51,14 @@ def _remember(chat_id,hashstr,spam):
 
 async def check_media(update,ctx,chat_id,user_id):
     msg=update.message
-    has_image=bool(msg.photo or (msg.document and msg.document.mime_type and msg.document.mime_type.startswith('image/')))
+    static_sticker=bool(msg.sticker and not msg.sticker.is_animated and not msg.sticker.is_video)
+    has_image=bool(msg.photo or static_sticker or (msg.document and msg.document.mime_type and msg.document.mime_type.startswith('image/')))
     if flag('observation_enabled') and observing(chat_id,user_id):
         if (has_image and flag('observation_block_images')) or (flag('observation_block_links') and ('http://' in (msg.text or msg.caption or '').lower() or 'https://' in (msg.text or msg.caption or '').lower() or 't.me/' in (msg.text or msg.caption or '').lower())):
             return '新成员观察期：禁止图片或链接'
     if not has_image or not (flag('ocr_enabled') or flag('image_hash_enabled')):return ''
     try:
-        file_obj=msg.photo[-1] if msg.photo else msg.document
+        file_obj=msg.photo[-1] if msg.photo else (msg.sticker if static_sticker else msg.document)
         if file_obj.file_size and file_obj.file_size>5*1024*1024:return ''
         async with _SEM:
             tgfile=await ctx.bot.get_file(file_obj.file_id)

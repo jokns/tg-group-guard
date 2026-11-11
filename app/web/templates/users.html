@@ -16,7 +16,7 @@
                         <th>用户名</th>
                         <th>首次出现</th>
                         <th>验证状态</th>
-                        <th>警告次数</th>
+                        <th>警告次数</th><th>观察期</th><th>管理操作</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -41,9 +41,18 @@
                                 <span class="badge bg-success">0</span>
                             {% endif %}
                         </td>
+                        <td><small>{{ row.observation_info or '无' }}</small></td>
+                        <td>
+                          <form method="post" action="{{ url_for('reset_user_warnings',user_id=row.user_id) }}" class="d-inline" onsubmit="return confirm('确认清零此用户的警告次数？')">
+                            <input type="hidden" name="page" value="{{ page }}"><button class="btn btn-sm btn-outline-warning">重置警告</button>
+                          </form>
+                          <form method="post" action="{{ url_for('end_user_observation',user_id=row.user_id) }}" class="d-inline" onsubmit="return confirm('确认解除该用户所有群的观察期？')">
+                            <input type="hidden" name="page" value="{{ page }}"><button class="btn btn-sm btn-outline-success">解除观察期</button>
+                          </form>
+                        </td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="5" class="text-center text-muted py-4">暂无用户数据</td></tr>
+                    <tr><td colspan="7" class="text-center text-muted py-4">暂无用户数据</td></tr>
                     {% endfor %}
                 </tbody>
             </table>

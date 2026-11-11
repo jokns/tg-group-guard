@@ -303,7 +303,7 @@ def users():
     conn = get_conn()
     c = conn.cursor()
     c.execute("""
-        SELECT * FROM users ORDER BY first_seen DESC LIMIT ? OFFSET ?
+        SELECT u.*, (SELECT GROUP_CONCAT(chat_id || ':' || until_ts, ', ') FROM member_observation mo WHERE mo.user_id=u.user_id AND mo.until_ts > strftime('%s','now')) AS observation_info FROM users u ORDER BY first_seen DESC LIMIT ? OFFSET ?
     """, (per_page, offset))
     rows = c.fetchall()
     c.execute("SELECT COUNT(*) FROM users")
@@ -311,6 +311,24 @@ def users():
     conn.close()
     total_pages = (total + per_page - 1) // per_page
     return render_template("users.html", rows=rows, page=page, total_pages=total_pages, total=total)
+
+@app.route("/users/<int:user_id>/reset-warnings", methods=["POST"])
+@login_required
+def reset_user_warnings(user_id):
+    conn=get_conn()
+    conn.execute("UPDATE users SET warning_count=0 WHERE user_id=?",(user_id,))
+    conn.commit();conn.close()
+    flash(f"用户 {user_id} 警告次数已重置；不会自动解除 Telegram 禁言或封禁", "success")
+    return redirect(url_for('users',page=request.form.get('page',1)))
+
+@app.route("/users/<int:user_id>/end-observation", methods=["POST"])
+@login_required
+def end_user_observation(user_id):
+    conn=get_conn()
+    conn.execute("DELETE FROM member_observation WHERE user_id=?",(user_id,))
+    conn.commit();conn.close()
+    flash(f"用户 {user_id} 的所有群组观察期已解除；不会改变入群验证禁言状态", "success")
+    return redirect(url_for('users',page=request.form.get('page',1)))
 
 @app.route("/settings", methods=["GET", "POST"])
 @login_required
