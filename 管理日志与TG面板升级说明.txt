@@ -1,0 +1,10 @@
+更新说明：
+1. 修复 /guarduser 无响应：原来消息过滤器抢先匹配私聊命令，现将管理员命令处理器注册在普通消息处理器之前。
+2. TG 管理面板：统计、用户查询、待验证、最近违规、管理日志、群白名单列表。
+3. Web 管理后台：系统与操作日志页面，分类查看最近200条。
+4. SQLite audit_logs 只保存必要事件，定时清理7天以前记录（每小时）；不会清空历史违规记录。
+5. Docker stdout/stderr 日志限制 10MB * 3 文件，降低日志占用；不会按7天删除 Docker 文件，而是按大小轮换。
+6. 默认关闭 httpx/werkzeug/apscheduler 的高频 INFO 输出，避免 Telegram Bot Token 被 HTTP 请求日志重复记录。
+7. 不会记录 Telegram 消息正文、验证令牌和 Bot Token。
+注意：只有用户在本地数据库存在记录或能在配置的群白名单中通过 Telegram API 查询到时，/guarduser 才能返回用户资料。
+部署前请备份 .env 和 data 目录，覆盖后 docker compose build --no-cache bot && docker compose up -d --force-recreate --no-deps bot。

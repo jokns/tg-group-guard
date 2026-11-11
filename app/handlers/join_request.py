@@ -1,3 +1,4 @@
+from app.audit import audit
 import random
 import secrets
 import time
@@ -250,6 +251,7 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                      (msg.message_id,chat.id,user.id,session_id))
         conn.commit();conn.close()
         logger.info("Direct join verification sent: chat=%s user=%s session=%s ttl=%s", chat.id, user.id, session_id, ttl)
+        audit("system", "bot", "verification_started", user.id, f"chat={chat.id}")
         context.job_queue.run_once(auto_kick,when=ttl,
             data={'user_id':user.id,'chat_id':chat.id,'session_id':session_id,'message_id':msg.message_id},
             name=f'verify_{session_id}')
@@ -278,6 +280,7 @@ async def auto_kick(context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         
         await kick_member(chat_id, user_id, context)
+        audit("system", "bot", "verification_timeout", user_id, f"chat={chat_id}")
         
         # 删除验证消息
         message_id = data.get("message_id")

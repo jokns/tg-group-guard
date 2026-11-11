@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
 from app.database import get_conn, get_setting, set_setting
 from app.config import Config
+from app.audit import audit
 
 import pyotp
 import qrcode
@@ -161,9 +162,11 @@ def login():
             # 未启用 TOTP，直接登录
             record_login_attempt(ip, success=True)
             session["logged_in"] = True
+            audit("system",ip,"web_login_success")
             return redirect(url_for("dashboard"))
         else:
             record_login_attempt(ip, success=False)
+            audit("system",ip,"web_login_failed")
             remaining = get_remaining_attempts(ip)
             if remaining == 0:
                 locked, remaining_seconds = is_ip_locked(ip)
@@ -176,6 +179,7 @@ def login():
 
 @app.route("/logout")
 def logout():
+    audit("system",get_client_ip(),"web_logout")
     session.clear()
     return redirect(url_for("login"))
 
@@ -198,6 +202,7 @@ def verify_2fa():
             record_login_attempt(ip, success=True)
             session.pop("pending_2fa", None)
             session["logged_in"] = True
+            audit("system",ip,"web_login_success")
             return redirect(url_for("dashboard"))
         else:
             flash("验证码错误，请重试", "danger")
@@ -318,6 +323,7 @@ def reset_user_warnings(user_id):
     conn=get_conn()
     conn.execute("UPDATE users SET warning_count=0 WHERE user_id=?",(user_id,))
     conn.commit();conn.close()
+    audit("web_admin", get_client_ip(), "reset_warnings", user_id)
     flash(f"用户 {user_id} 警告次数已重置；不会自动解除 Telegram 禁言或封禁", "success")
     return redirect(url_for('users',page=request.form.get('page',1)))
 
@@ -327,8 +333,21 @@ def end_user_observation(user_id):
     conn=get_conn()
     conn.execute("DELETE FROM member_observation WHERE user_id=?",(user_id,))
     conn.commit();conn.close()
+    audit("web_admin", get_client_ip(), "end_observation", user_id)
     flash(f"用户 {user_id} 的所有群组观察期已解除；不会改变入群验证禁言状态", "success")
     return redirect(url_for('users',page=request.form.get('page',1)))
+
+@app.route('/audit')
+@login_required
+def audit_page():
+    category=request.args.get('category','')
+    c=get_conn()
+    if category in ('system','web_admin','tg_admin'):
+        rows=c.execute('SELECT * FROM audit_logs WHERE category=? ORDER BY id DESC LIMIT 200',(category,)).fetchall()
+    else:
+        rows=c.execute('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 200').fetchall()
+    c.close()
+    return render_template('audit.html',rows=rows,category=category,datetime=datetime)
 
 @app.route("/settings", methods=["GET", "POST"])
 @login_required
@@ -349,6 +368,7 @@ def settings():
         # 保存到数据库（即时生效，无需重启）
         set_setting("verify_timeout", verify_timeout)
         set_setting("max_warnings", max_warnings)
+        audit("web_admin",get_client_ip(),"settings_changed")
         set_setting("mute_duration", mute_duration)
         for key in ('direct_join_verify_enabled','join_approval_enabled','ocr_enabled','image_hash_enabled','observation_enabled','observation_block_images','observation_block_links'):
             set_setting(key, '1' if data.get(key) else '0')

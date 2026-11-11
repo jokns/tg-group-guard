@@ -109,6 +109,12 @@ def init_db():
         session_id INTEGER NOT NULL, expires_at INTEGER NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending', message_id INTEGER,
         PRIMARY KEY(chat_id,user_id))""")
+    c.execute("""CREATE TABLE IF NOT EXISTS audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL,
+        category TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL,
+        target TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT ''
+    )""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at)")
     conn.commit()
     conn.close()
 
