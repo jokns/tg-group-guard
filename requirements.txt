@@ -8,3 +8,4 @@ Pillow>=10,<12
 ImageHash>=4.3,<5
 numpy>=1.24,<3
 waitress>=3.0,<4
+regex>=2024.0.0,<2027

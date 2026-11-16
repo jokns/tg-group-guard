@@ -3,6 +3,17 @@ import asyncio
 import io
 import logging
 import time
+import regex
+
+# Match Unicode Emoji (including composite emoji, flags and skin tone variants).
+_EMOJI_PATTERN = regex.compile(r'\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Presentation}')
+
+def contains_emoji(msg):
+    if msg.sticker or msg.animation:
+        return True
+    if _EMOJI_PATTERN.search(msg.text or '') or _EMOJI_PATTERN.search(msg.caption or ''):
+        return True
+    return any(entity.type == 'custom_emoji' for entity in tuple(msg.entities or ()) + tuple(msg.caption_entities or ()))
 from app.database import get_conn,get_setting
 log=logging.getLogger(__name__)
 _SEM=asyncio.Semaphore(2)
@@ -64,8 +75,12 @@ async def check_media(update,ctx,chat_id,user_id):
     static_sticker=bool(msg.sticker and not msg.sticker.is_animated and not msg.sticker.is_video)
     has_image=bool(msg.photo or static_sticker or (msg.document and msg.document.mime_type and msg.document.mime_type.startswith('image/')))
     if flag('observation_enabled') and observing(chat_id,user_id):
-        if (has_image and flag('observation_block_images')) or (flag('observation_block_links') and ('http://' in (msg.text or msg.caption or '').lower() or 'https://' in (msg.text or msg.caption or '').lower() or 't.me/' in (msg.text or msg.caption or '').lower())):
-            return '新成员观察期：禁止图片或链接'
+        if flag('observation_block_emoji', '0') and contains_emoji(msg):
+            return '新成员观察期：禁止发送表情、贴纸或 GIF'
+        if has_image and flag('observation_block_images'):
+            return '新成员观察期：禁止发送图片'
+        if flag('observation_block_links') and ('http://' in (msg.text or msg.caption or '').lower() or 'https://' in (msg.text or msg.caption or '').lower() or 't.me/' in (msg.text or msg.caption or '').lower()):
+            return '新成员观察期：禁止发送链接'
     if not has_image or not (flag('ocr_enabled') or flag('image_hash_enabled')):return ''
     try:
         file_obj=msg.photo[-1] if msg.photo else (msg.sticker if static_sticker else msg.document)
