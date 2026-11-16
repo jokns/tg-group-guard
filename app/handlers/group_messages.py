@@ -16,6 +16,39 @@ def _get_warning_limit_action():
     action = get_setting('warning_limit_action', 'ban')
     return action if action in ('ban', 'kick', 'ban_and_kick') else 'ban'
 
+def _save_warning_message(chat_id: int, user_id: int, message_id: int):
+    conn = get_conn()
+    try:
+        conn.execute("INSERT OR IGNORE INTO warning_messages (chat_id, user_id, message_id) VALUES (?, ?, ?)",
+                     (chat_id, user_id, message_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+async def _clear_warning_messages(context, chat_id: int, user_id: int):
+    """仅清理本机器人记录的、该用户在当前群的警告通知；失败的 ID 留待下次重试。"""
+    conn = get_conn()
+    try:
+        rows = conn.execute("SELECT message_id FROM warning_messages WHERE chat_id=? AND user_id=? ORDER BY message_id",
+                            (chat_id, user_id)).fetchall()
+    finally:
+        conn.close()
+    for row in rows:
+        message_id = row["message_id"]
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except Exception as exc:
+            logger.warning("Could not remove old warning chat=%s user=%s msg=%s: %s",
+                           chat_id, user_id, message_id, exc)
+            continue
+        conn = get_conn()
+        try:
+            conn.execute("DELETE FROM warning_messages WHERE chat_id=? AND user_id=? AND message_id=?",
+                         (chat_id, user_id, message_id))
+            conn.commit()
+        finally:
+            conn.close()
+
 def _get_mute_duration():
     from app.database import get_setting
     val = get_setting("mute_duration", "")
@@ -266,6 +299,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 action_text = '已被永久封禁并踢出群组，禁止重新加入'
             else:
                 action_text = '已被永久封禁'
+            await _clear_warning_messages(context, chat_id, user.id)
             await context.bot.send_message(chat_id,
                 f"🚫 用户 {mention} 因累计 {warnings} 次违规{action_text}。",
                 parse_mode="HTML", disable_web_page_preview=True)
@@ -279,11 +313,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 permissions=ChatPermissions(can_send_messages=False),
                 until_date=until_date
             )
-            await context.bot.send_message(
+            warning_message = await context.bot.send_message(
                 chat_id,
                 f"⚠️ {mention} 的违规消息已被删除。\n<b>原因:</b> {sanitize_reason(reason)}\n<b>警告:</b> {warnings}/{_get_max_warnings()}\n达到上限将被{'踢出群组' if _get_warning_limit_action() == 'kick' else ('永久封禁并禁止重新加入' if _get_warning_limit_action() == 'ban_and_kick' else '永久封禁')}。",
                 parse_mode="HTML", disable_web_page_preview=True
             )
+            try:
+                _save_warning_message(chat_id, user.id, warning_message.message_id)
+            except Exception as exc:
+                logger.error("Failed to store warning message ID: %s", exc)
         except Exception as e:
             logger.error(f"Restrict failed: {e}")
 
