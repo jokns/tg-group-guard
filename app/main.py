@@ -6,7 +6,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler
 from app.config import Config
 from app.database import init_db
 from app.handlers.join_request import chat_member_handler, verification_callback_handler
-from app.handlers.group_messages import message_handler, member_message_tracker
+from app.handlers.group_messages import message_handler
 from app.handlers.join_approval import request_handler, start_handler, answer_handler, cleanup
 from app.handlers.admin_commands import get_admin_handlers
 from app.handlers.admin_panel import handlers as admin_panel_handlers
@@ -72,8 +72,6 @@ def main():
 
     # 在主线程启动 Telegram Bot（需要信号处理器）
     application = ApplicationBuilder().token(Config.BOT_TOKEN).post_init(register_command_menu).build()
-    # Run independently before moderation/commands so every received group message is tracked.
-    application.add_handler(member_message_tracker, group=-1)
     application.add_handler(request_handler)
     application.add_handler(start_handler)
     application.add_handler(answer_handler)
