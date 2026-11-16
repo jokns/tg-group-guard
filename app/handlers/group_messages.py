@@ -11,6 +11,11 @@ def _get_max_warnings():
     val = get_setting("max_warnings", "")
     return int(val) if val and val.isdigit() else Config.MAX_WARNINGS
 
+def _get_warning_limit_action():
+    from app.database import get_setting
+    action = get_setting('warning_limit_action', 'ban')
+    return action if action in ('ban', 'kick') else 'ban'
+
 def _get_mute_duration():
     from app.database import get_setting
     val = get_setting("mute_duration", "")
@@ -251,11 +256,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif warnings >= _get_max_warnings():
         try:
             await context.bot.ban_chat_member(chat_id, user.id)
+            if _get_warning_limit_action() == 'kick':
+                # Telegram kicks by banning and immediately unbanning.
+                await context.bot.unban_chat_member(chat_id, user.id, only_if_banned=True)
+                action_text = '已被踢出群组（允许重新加入）'
+            else:
+                action_text = '已被永久封禁'
             await context.bot.send_message(chat_id,
-                f"🚫 用户 {mention} 因多次违规已被永久封禁。",
+                f"🚫 用户 {mention} 因累计 {warnings} 次违规{action_text}。",
                 parse_mode="HTML", disable_web_page_preview=True)
         except Exception as e:
-            logger.error(f"Ban failed: {e}")
+            logger.error(f"Warning limit action failed: {e}")
     else:
         try:
             until_date = datetime.now(timezone.utc) + timedelta(seconds=_get_mute_duration())
@@ -266,7 +277,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await context.bot.send_message(
                 chat_id,
-                f"⚠️ {mention} 的违规消息已被删除。\n<b>原因:</b> {sanitize_reason(reason)}\n<b>警告:</b> {warnings}/{_get_max_warnings()}\n再违规将被永久封禁。",
+                f"⚠️ {mention} 的违规消息已被删除。\n<b>原因:</b> {sanitize_reason(reason)}\n<b>警告:</b> {warnings}/{_get_max_warnings()}\n达到上限将被{'踢出群组' if _get_warning_limit_action() == 'kick' else '永久封禁'}。",
                 parse_mode="HTML", disable_web_page_preview=True
             )
         except Exception as e:
@@ -320,4 +331,4 @@ async def handle_flood_violation(update: Update, context: ContextTypes.DEFAULT_T
         except Exception as e:
             logger.error(f"Warn flood user failed: {e}")
 
-message_handler = MessageHandler(filters.TEXT | filters.CAPTION | filters.PHOTO | filters.Document.IMAGE | filters.Sticker.STATIC, handle_message)
+message_handler = MessageHandler(filters.TEXT | filters.CAPTION | filters.PHOTO | filters.Document.IMAGE | filters.Sticker.ALL | filters.ANIMATION, handle_message)
