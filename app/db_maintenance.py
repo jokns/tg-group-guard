@@ -63,6 +63,7 @@ def apply_pending_restore():
     # Keep a rollback copy of the current database before replacing it.
     if os.path.isfile(DB_PATH):
         backup_database(DB_PATH + ".pre-restore.bak")
+        os.chmod(DB_PATH + ".pre-restore.bak", 0o600)
     src = sqlite3.connect("file:" + RESTORE_PATH + "?mode=ro", uri=True)
     dst = sqlite3.connect(DB_PATH)
     try:
