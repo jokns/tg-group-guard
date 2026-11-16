@@ -6,7 +6,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler
 from app.config import Config
 from app.database import init_db
 from app.db_maintenance import apply_pending_restore
-from app.handlers.join_request import chat_member_handler, verification_callback_handler
+from app.handlers.join_request import chat_member_handler, my_chat_member_handler, verification_callback_handler
 from app.handlers.group_messages import message_handler
 from app.handlers.join_approval import request_handler, start_handler, answer_handler, cleanup
 from app.handlers.admin_commands import get_admin_handlers
@@ -79,6 +79,7 @@ def main():
     application.add_handler(start_handler)
     application.add_handler(answer_handler)
     application.add_handler(chat_member_handler)
+    application.add_handler(my_chat_member_handler)
     application.job_queue.run_repeating(cleanup, interval=60, first=30)
     application.add_handler(verification_callback_handler)
     for handler in admin_panel_handlers:
