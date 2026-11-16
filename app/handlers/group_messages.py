@@ -288,18 +288,44 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Admin spam deleted (no ban): user={user.id} reason={reason}")
     elif warnings >= _get_max_warnings():
         try:
-            await context.bot.ban_chat_member(chat_id, user.id)
-            if _get_warning_limit_action() == 'kick':
-                # Telegram kicks by banning and immediately unbanning.
-                await context.bot.unban_chat_member(chat_id, user.id, only_if_banned=True)
-                action_text = '已被踢出群组（允许重新加入）'
-            elif _get_warning_limit_action() == 'ban_and_kick':
-                # ban_chat_member already removes the user and blocks future joins.
-                # Do not unban here: that would allow the user to rejoin.
-                action_text = '已被永久封禁并踢出群组，禁止重新加入'
-            else:
-                action_text = '已被永久封禁'
+            action = _get_warning_limit_action()
+            # Telegram ban_chat_member removes the member and blocks rejoining.
+            await context.bot.ban_chat_member(chat_id=chat_id, user_id=user.id)
+            if action == 'kick':
+                # Only the kick mode unbans, allowing future rejoining.
+                await context.bot.unban_chat_member(chat_id=chat_id, user_id=user.id, only_if_banned=True)
+
+            # Check actual Telegram membership state before claiming success.
+            try:
+                member_after = await context.bot.get_chat_member(chat_id=chat_id, user_id=user.id)
+            except Exception as verify_exc:
+                logger.error("Cannot verify moderation chat=%s user=%s action=%s: %s",
+                             chat_id, user.id, action, verify_exc)
+                await context.bot.send_message(
+                    chat_id,
+                    f"⚠️ 用户 {mention} 已达到 {warnings} 次违规，处罚请求已提交，但无法核验成员状态，请管理员检查。",
+                    parse_mode="HTML", disable_web_page_preview=True
+                )
+                return
+
+            status = member_after.status
+            is_member = status in ('creator', 'administrator', 'member') or (
+                status == 'restricted' and getattr(member_after, 'is_member', False)
+            )
+            expected = status in ('left', 'kicked', 'banned') if action == 'kick' else status in ('kicked', 'banned')
+            if is_member or not expected:
+                logger.error("Moderation verification mismatch chat=%s user=%s action=%s status=%s is_member=%s",
+                             chat_id, user.id, action, status, is_member)
+                await context.bot.send_message(
+                    chat_id,
+                    f"⚠️ 用户 {mention} 已达到 {warnings} 次违规，但处罚后成员状态为 {status}，未确认成功移出/封禁，请管理员检查机器人权限。",
+                    parse_mode="HTML", disable_web_page_preview=True
+                )
+                return
+
             await _clear_warning_messages(context, chat_id, user.id)
+            action_text = ('已被踢出群组（允许重新加入）' if action == 'kick'
+                           else '已被永久封禁并移出群组（禁止重新加入）')
             await context.bot.send_message(chat_id,
                 f"🚫 用户 {mention} 因累计 {warnings} 次违规{action_text}。",
                 parse_mode="HTML", disable_web_page_preview=True)
