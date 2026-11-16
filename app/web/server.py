@@ -488,8 +488,6 @@ def settings():
         # 保存到数据库（即时生效，无需重启）
         set_setting("verify_timeout", verify_timeout)
         set_setting("max_warnings", max_warnings)
-        days = data.get("log_retention_days", "7")
-        set_setting("log_retention_days", days if days in RETENTION_CHOICES else "7")
         audit("web_admin",get_client_ip(),"settings_changed")
         set_setting("mute_duration", mute_duration)
         warning_limit_action = data.get('warning_limit_action', 'ban')
