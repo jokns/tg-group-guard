@@ -49,6 +49,16 @@ async def _clear_warning_messages(context, chat_id: int, user_id: int):
         finally:
             conn.close()
 
+async def _delete_final_moderation_notice(context: ContextTypes.DEFAULT_TYPE):
+    """Remove the final punishment notice after 60 seconds."""
+    data = context.job.data
+    try:
+        await context.bot.delete_message(chat_id=data["chat_id"], message_id=data["message_id"])
+    except Exception as exc:
+        logger.warning("Failed to delete final punishment notice chat=%s message=%s: %s",
+                       data["chat_id"], data["message_id"], exc)
+
+
 def _get_mute_duration():
     from app.database import get_setting
     val = get_setting("mute_duration", "")
@@ -326,9 +336,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _clear_warning_messages(context, chat_id, user.id)
             action_text = ('已被踢出群组（允许重新加入）' if action == 'kick'
                            else '已被永久封禁并移出群组（禁止重新加入）')
-            await context.bot.send_message(chat_id,
-                f"🚫 用户 {mention} 因累计 {warnings} 次违规{action_text}。",
-                parse_mode="HTML", disable_web_page_preview=True)
+            # Keep the final notice visible to all admins for one minute.
+            # Previous warning notifications have already been removed.
+            notice = await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"🚫 用户 {mention} 因累计 {warnings} 次违规{action_text}。\n此通知将在 1 分钟后自动删除。",
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            context.job_queue.run_once(
+                _delete_final_moderation_notice,
+                when=60,
+                data={"chat_id": chat_id, "message_id": notice.message_id},
+                name=f"final-moderation-notice-{chat_id}-{notice.message_id}",
+            )
+            logger.info("Warning limit moderation complete chat=%s user=%s warnings=%s action=%s notice=%s",
+                        chat_id, user.id, warnings, action, notice.message_id)
         except Exception as e:
             logger.error(f"Warning limit action failed: {e}")
     else:
