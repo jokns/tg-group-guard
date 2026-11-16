@@ -49,10 +49,11 @@
             <div class="mb-3">
                 <label class="form-label">达到最大警告次数后的处理方式</label>
                 <select name="warning_limit_action" class="form-select">
-                    <option value="ban" {% if warning_limit_action != 'kick' %}selected{% endif %}>永久封禁（默认）</option>
+                    <option value="ban" {% if warning_limit_action not in ('kick', 'ban_and_kick') %}selected{% endif %}>永久封禁（默认，禁止重新加入）</option>
                     <option value="kick" {% if warning_limit_action == 'kick' %}selected{% endif %}>踢出群组（允许重新加入）</option>
+                    <option value="ban_and_kick" {% if warning_limit_action == 'ban_and_kick' %}selected{% endif %}>永久封禁 + 踢出群组 + 禁止重新加入</option>
                 </select>
-                <div class="form-text">默认达到 3 次警告触发；实际次数由上方“最大警告次数”设置决定。</div>
+                <div class="form-text">默认达到 3 次警告触发；实际次数由上方“最大警告次数”设置决定。永久封禁本身会立即移出成员并禁止重新加入；第三个选项是更明确的同等处罚模式。</div>
             </div>
             <div class="mb-3">
                 <label class="form-label">管理后台密码</label>
