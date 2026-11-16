@@ -5,6 +5,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import logging
 import base64
 import io
+import tempfile
+from pathlib import Path
+from flask import send_file
+from app.database import DB_PATH
+from app.db_maintenance import RETENTION_CHOICES, RESTORE_PATH, backup_database, validate_backup, clear_all_logs
 from functools import wraps
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, abort
@@ -369,6 +374,86 @@ def audit_page():
     c.close()
     return render_template('audit.html',rows=rows,category=category,datetime=datetime)
 
+@app.route("/settings/logs/clear", methods=["POST"])
+@login_required
+def clear_logs_route():
+    if request.form.get("confirmation", "").strip() != "清空所有日志":
+        flash("二次确认失败：请输入“清空所有日志”", "danger")
+        return redirect(url_for("settings"))
+    if not verify_password(request.form.get("admin_password_confirm", "")):
+        flash("管理员密码验证失败", "danger")
+        return redirect(url_for("settings"))
+    audit_count, violation_count = clear_all_logs()
+    # Intentionally do not audit this action to keep the log tables empty.
+    logger.warning("All database logs cleared by web administrator: audit=%s violations=%s",
+                   audit_count, violation_count)
+    flash(f"已清理 {audit_count} 条审计日志和 {violation_count} 条违规日志；用户警告次数不受影响", "success")
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/database/export", methods=["POST"])
+@login_required
+def export_database_route():
+    if not verify_password(request.form.get("admin_password_confirm", "")):
+        abort(403, description="管理员密码验证失败")
+    # Backup API produces a consistent SQLite snapshot, including WAL changes.
+    with tempfile.TemporaryDirectory(prefix="tg-guard-export-") as tmp:
+        path = os.path.join(tmp, "backup.sqlite3")
+        backup_database(path)
+        with open(path, "rb") as handle:
+            payload = handle.read()
+    response = send_file(io.BytesIO(payload), as_attachment=True,
+                         download_name=f"tg-group-guard-{datetime.now().strftime('%Y%m%d-%H%M%S')}.sqlite3",
+                         mimetype="application/octet-stream")
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@app.route("/settings/database/import", methods=["POST"])
+@login_required
+def import_database_route():
+    if request.form.get("confirmation", "").strip() != "确认恢复数据库":
+        flash("请先完成二次确认", "danger")
+        return redirect(url_for("settings"))
+    if not verify_password(request.form.get("admin_password_confirm", "")):
+        flash("管理员密码验证失败", "danger")
+        return redirect(url_for("settings"))
+    upload = request.files.get("database_file")
+    if not upload or not upload.filename:
+        flash("请选择 SQLite 备份文件", "danger")
+        return redirect(url_for("settings"))
+    if request.content_length and request.content_length > 50 * 1024 * 1024:
+        abort(413)
+    if os.path.exists(RESTORE_PATH):
+        flash("已有等待重启恢复的数据库，请先重启服务", "warning")
+        return redirect(url_for("settings"))
+    os.makedirs(os.path.dirname(RESTORE_PATH) or ".", exist_ok=True)
+    tmp_path = RESTORE_PATH + ".upload"
+    try:
+        with open(tmp_path, "xb") as output:
+            os.chmod(tmp_path, 0o600)
+            total = 0
+            while True:
+                chunk = upload.stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > 50 * 1024 * 1024:
+                    raise ValueError("文件超过 50MB 限制")
+                output.write(chunk)
+        validate_backup(tmp_path)
+        os.replace(tmp_path, RESTORE_PATH)
+    except (ValueError, sqlite3.Error, OSError) as exc:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        logger.warning("Database import rejected: %s", exc)
+        flash(f"导入失败：{exc}", "danger")
+        return redirect(url_for("settings"))
+    flash("备份已验证并暂存。请立即重启整个机器人服务，启动时将自动恢复；原数据库会保留为 .pre-restore.bak", "warning")
+    return redirect(url_for("settings"))
+
+
 @app.route("/settings", methods=["GET", "POST"])
 @login_required
 def settings():
@@ -388,6 +473,8 @@ def settings():
         # 保存到数据库（即时生效，无需重启）
         set_setting("verify_timeout", verify_timeout)
         set_setting("max_warnings", max_warnings)
+        days = data.get("log_retention_days", "7")
+        set_setting("log_retention_days", days if days in RETENTION_CHOICES else "7")
         audit("web_admin",get_client_ip(),"settings_changed")
         set_setting("mute_duration", mute_duration)
         warning_limit_action = data.get('warning_limit_action', 'ban')
@@ -481,6 +568,7 @@ def settings():
                            verify_timeout=db_verify_timeout, max_warnings=db_max_warnings,
                            mute_duration=db_mute_duration,
                            warning_limit_action=get_setting('warning_limit_action', 'ban'),
+                           log_retention_days=get_setting('log_retention_days', '7'),
                            guard_settings={key:get_setting(key,default) for key,default in {
                              'direct_join_verify_enabled':'1','direct_verify_timeout':'300','join_approval_enabled':'1','join_approval_timeout':'300','ocr_enabled':'1','smart_ocr_enabled':'1',
                              'image_hash_enabled':'1','image_hash_distance':'6','observation_enabled':'1',
