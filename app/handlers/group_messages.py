@@ -1,5 +1,6 @@
 import re
 import logging
+import time
 from datetime import datetime, timezone, timedelta
 from telegram import Update, ChatPermissions
 from telegram.ext import ContextTypes, MessageHandler, filters
@@ -55,6 +56,73 @@ def _get_mute_duration():
     return int(val) if val and val.isdigit() else Config.MUTE_DURATION
 
 logger = logging.getLogger(__name__)
+
+async def track_member_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Track all ordinary member messages, including non-violating media and commands."""
+    msg = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+    if not msg or not chat or chat.type not in ("group", "supergroup") or not user or user.is_bot:
+        return
+    from app.database import is_chat_allowed
+    if not is_chat_allowed(chat.id):
+        return
+    sent_at = int(msg.date.timestamp())
+    # Telegram generally does not permit deletion after 48 hours.
+    if sent_at < int(time.time()) - 48 * 3600:
+        return
+    try:
+        conn = get_conn()
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO member_messages (chat_id,user_id,message_id,sent_at) VALUES (?,?,?,?)",
+                (chat.id, user.id, msg.message_id, sent_at)
+            )
+            # Bounded retention, also cleans up old rows for the same chat.
+            conn.execute("DELETE FROM member_messages WHERE chat_id=? AND sent_at<?",
+                         (chat.id, int(time.time()) - 48 * 3600))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        logger.exception("Failed to track member message chat=%s user=%s", chat.id, user.id)
+
+
+async def _clear_member_messages(context, chat_id: int, user_id: int):
+    """Delete only tracked messages from the removed user in this group."""
+    cutoff = int(time.time()) - 48 * 3600
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT message_id, sent_at FROM member_messages WHERE chat_id=? AND user_id=? ORDER BY message_id",
+            (chat_id, user_id)
+        ).fetchall()
+    finally:
+        conn.close()
+    deleted = 0
+    for row in rows:
+        message_id = row["message_id"]
+        if row["sent_at"] <= cutoff:
+            continue
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+            deleted += 1
+        except Exception as exc:
+            logger.warning("Cannot delete tracked member message chat=%s user=%s message=%s: %s",
+                           chat_id, user_id, message_id, exc)
+            continue
+        conn = get_conn()
+        try:
+            conn.execute("DELETE FROM member_messages WHERE chat_id=? AND message_id=?",
+                         (chat_id, message_id))
+            conn.commit()
+        finally:
+            conn.close()
+    logger.info("Member message cleanup chat=%s user=%s deleted=%s total=%s",
+                chat_id, user_id, deleted, len(rows))
+    return deleted
+
+member_message_tracker = MessageHandler(filters.ALL, track_member_message)
 
 URL_PATTERN = re.compile(r'https?://\S+|www\.\S+|t\.me/\S+|telegram\.me/\S+', re.IGNORECASE)
 TG_INVITE_PATTERN = re.compile(r't\.me/\+?[a-zA-Z0-9_]+|telegram\.me/\+?[a-zA-Z0-9_]+', re.IGNORECASE)
@@ -324,6 +392,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             await _clear_warning_messages(context, chat_id, user.id)
+            await _clear_member_messages(context, chat_id, user.id)
             action_text = ('已被踢出群组（允许重新加入）' if action == 'kick'
                            else '已被永久封禁并移出群组（禁止重新加入）')
             await context.bot.send_message(chat_id,
