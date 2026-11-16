@@ -54,6 +54,15 @@ def init_db():
         PRIMARY KEY (chat_id, message_id)
     )''')
     c.execute("CREATE INDEX IF NOT EXISTS idx_warning_messages_user ON warning_messages(chat_id, user_id)")
+    # Track group messages received by the bot for cleanup after member removal.
+    c.execute("""CREATE TABLE IF NOT EXISTS member_messages (
+        chat_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        message_id INTEGER NOT NULL,
+        sent_at INTEGER NOT NULL,
+        PRIMARY KEY (chat_id, message_id)
+    )""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_member_messages_user ON member_messages(chat_id, user_id, sent_at)")
     # 违禁词表
     c.execute('''
         CREATE TABLE IF NOT EXISTS blocked_keywords (
