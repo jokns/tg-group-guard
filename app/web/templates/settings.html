@@ -74,7 +74,7 @@
             <div class="card border-0 shadow-sm mb-4">
   <div class="card-header bg-white"><h6 class="mb-0">🗂️ 日志保留与数据库备份</h6></div>
   <div class="card-body">
-    <form method="POST" action="{{ url_for('settings') }}" class="mb-4">
+    <form method="POST" action="{{ url_for('save_log_retention_route') }}" class="mb-4">
       <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
       <p class="text-muted small">日志保留期限作用于审计日志和违规记录，每小时自动清理过期记录；不会重置警告次数或 Telegram 封禁。</p>
       <label class="form-label" for="log_retention_days">日志保存时间</label>
@@ -86,7 +86,7 @@
         </select>
         <button type="submit" class="btn btn-primary text-nowrap">保存保留期限</button>
       </div>
-      <div class="form-text">本按钮仅保存日志期限；其他系统设置请使用上方的“保存配置”。</div>
+      <div class="form-text">本按钮仅保存日志期限，不影响其他系统设置。</div>
     </form>
     <hr>
     <h6>清空全部日志</h6>
