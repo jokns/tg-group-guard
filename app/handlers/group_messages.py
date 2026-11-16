@@ -14,7 +14,7 @@ def _get_max_warnings():
 def _get_warning_limit_action():
     from app.database import get_setting
     action = get_setting('warning_limit_action', 'ban')
-    return action if action in ('ban', 'kick') else 'ban'
+    return action if action in ('ban', 'kick', 'ban_and_kick') else 'ban'
 
 def _get_mute_duration():
     from app.database import get_setting
@@ -260,6 +260,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Telegram kicks by banning and immediately unbanning.
                 await context.bot.unban_chat_member(chat_id, user.id, only_if_banned=True)
                 action_text = '已被踢出群组（允许重新加入）'
+            elif _get_warning_limit_action() == 'ban_and_kick':
+                # ban_chat_member already removes the user and blocks future joins.
+                # Do not unban here: that would allow the user to rejoin.
+                action_text = '已被永久封禁并踢出群组，禁止重新加入'
             else:
                 action_text = '已被永久封禁'
             await context.bot.send_message(chat_id,
@@ -277,7 +281,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await context.bot.send_message(
                 chat_id,
-                f"⚠️ {mention} 的违规消息已被删除。\n<b>原因:</b> {sanitize_reason(reason)}\n<b>警告:</b> {warnings}/{_get_max_warnings()}\n达到上限将被{'踢出群组' if _get_warning_limit_action() == 'kick' else '永久封禁'}。",
+                f"⚠️ {mention} 的违规消息已被删除。\n<b>原因:</b> {sanitize_reason(reason)}\n<b>警告:</b> {warnings}/{_get_max_warnings()}\n达到上限将被{'踢出群组' if _get_warning_limit_action() == 'kick' else ('永久封禁并禁止重新加入' if _get_warning_limit_action() == 'ban_and_kick' else '永久封禁')}。",
                 parse_mode="HTML", disable_web_page_preview=True
             )
         except Exception as e:
