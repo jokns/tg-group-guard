@@ -374,6 +374,18 @@ def audit_page():
     c.close()
     return render_template('audit.html',rows=rows,category=category,datetime=datetime)
 
+@app.route("/settings/logs/retention", methods=["POST"])
+@login_required
+def save_log_retention_route():
+    days = request.form.get("log_retention_days", "7")
+    if days not in RETENTION_CHOICES:
+        abort(400)
+    set_setting("log_retention_days", days)
+    audit("web_admin", get_client_ip(), "log_retention_changed", days)
+    flash("日志保留期限已保存，将在下一次定时清理时生效", "success")
+    return redirect(url_for("settings"))
+
+
 @app.route("/settings/logs/clear", methods=["POST"])
 @login_required
 def clear_logs_route():
