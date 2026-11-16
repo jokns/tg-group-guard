@@ -47,15 +47,6 @@
                 </div>
             </div>
             <div class="mb-3">
-                <label class="form-label">达到最大警告次数后的处理方式</label>
-                <select name="warning_limit_action" class="form-select">
-                    <option value="ban" {% if warning_limit_action not in ('kick', 'ban_and_kick') %}selected{% endif %}>永久封禁（默认，禁止重新加入）</option>
-                    <option value="kick" {% if warning_limit_action == 'kick' %}selected{% endif %}>踢出群组（允许重新加入）</option>
-                    <option value="ban_and_kick" {% if warning_limit_action == 'ban_and_kick' %}selected{% endif %}>永久封禁 + 踢出群组 + 禁止重新加入</option>
-                </select>
-                <div class="form-text">默认达到 3 次警告触发；实际次数由上方“最大警告次数”设置决定。永久封禁本身会立即移出成员并禁止重新加入；第三个选项是更明确的同等处罚模式。</div>
-            </div>
-            <div class="mb-3">
                 <label class="form-label">管理后台密码</label>
                 <input type="password" name="admin_password" class="form-control" placeholder="留空则不变" autocomplete="new-password">
                 <div class="form-text">当前密码已隐藏，输入新密码可修改</div>
@@ -84,6 +75,15 @@
             {% for key,label in [('join_approval_enabled','启用申请入群验证（需群开启批准新成员）'),('direct_join_verify_enabled','启用直接入群禁言 → 私聊验证 → 解禁'),('ocr_enabled','本地 RapidOCR 图片文字识别'),('smart_ocr_enabled','智能拼接 OCR（空间排序、文本归一化、分块复检；增加 CPU 消耗）'),('image_hash_enabled','图片感知哈希相似广告拦截'),('observation_enabled','启用新成员观察期'),('observation_block_images','观察期禁止图片'),('observation_block_links','观察期禁止链接'),('observation_block_emoji','观察期禁止发送表情（Emoji、贴纸、GIF）')] %}
             <div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" name="{{ key }}" id="{{ key }}" {% if guard_settings[key]=='1' %}checked{% endif %}><label class="form-check-label" for="{{ key }}">{{ label }}</label></div>
             {% endfor %}
+            <div class="mb-3 mt-3">
+                <label class="form-label fw-semibold" for="warning_limit_action">🚫 达到最大警告次数后的处罚方式</label>
+                <select name="warning_limit_action" id="warning_limit_action" class="form-select">
+                    <option value="ban" {% if warning_limit_action not in ('kick', 'ban_and_kick') %}selected{% endif %}>永久封禁（立即移出，禁止重新加入；默认）</option>
+                    <option value="kick" {% if warning_limit_action == 'kick' %}selected{% endif %}>仅踢出群组（允许重新加入）</option>
+                    <option value="ban_and_kick" {% if warning_limit_action == 'ban_and_kick' %}selected{% endif %}>永久封禁 + 踢出群组 + 禁止重新加入</option>
+                </select>
+                <div class="form-text">适用于违规警告累计达到上方“最大警告次数”（默认 3 次）的用户，不限于观察期。踢出或封禁成功后，自动删除本机器人此前为该用户在本群发送的警告通知；最终处罚通知保留。Telegram 的永久封禁已包含立即踢出和禁止重新加入。</div>
+            </div>
             <div class="row mt-3">
               <div class="col-md-4 mb-3"><label class="form-label">申请入群验证有效期（秒）</label><input class="form-control" type="number" min="60" max="900" name="join_approval_timeout" value="{{ guard_settings.join_approval_timeout }}"></div>
               <div class="col-md-4 mb-3"><label class="form-label">直接入群验证超时（秒）</label><input class="form-control" type="number" min="60" max="900" name="direct_verify_timeout" value="{{ guard_settings.direct_verify_timeout }}"></div>
