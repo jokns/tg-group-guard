@@ -45,6 +45,15 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    # 保存机器人发出的警告消息 ID，踢出/封禁后可清理历史警告。
+    c.execute('''CREATE TABLE IF NOT EXISTS warning_messages (
+        chat_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        message_id INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (chat_id, message_id)
+    )''')
+    c.execute("CREATE INDEX IF NOT EXISTS idx_warning_messages_user ON warning_messages(chat_id, user_id)")
     # 违禁词表
     c.execute('''
         CREATE TABLE IF NOT EXISTS blocked_keywords (
