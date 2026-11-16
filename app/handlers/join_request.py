@@ -134,6 +134,26 @@ async def auto_delete_welcome(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.warning(f"Failed to auto-delete welcome message {message_id}: {e}")
 
+async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bot's own membership changes arrive as MY_CHAT_MEMBER, not CHAT_MEMBER."""
+    event = update.my_chat_member
+    if not event or event.chat.type not in ("group", "supergroup"):
+        return
+    from app.database import is_chat_allowed
+    chat_id = event.chat.id
+    if is_chat_allowed(chat_id):
+        return
+    # Ignore departure events; leave only when bot is actually a member/admin.
+    new_status = event.new_chat_member.status
+    if new_status not in ("member", "administrator", "creator", "restricted"):
+        return
+    try:
+        await context.bot.leave_chat(chat_id)
+        logger.warning("Bot left non-whitelisted group chat=%s status=%s", chat_id, new_status)
+    except Exception:
+        logger.exception("Bot failed to leave non-whitelisted group chat=%s", chat_id)
+
+
 async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.chat_member:
         return
@@ -393,4 +413,5 @@ async def verification_callback(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
 chat_member_handler = ChatMemberHandler(handle_chat_member, ChatMemberHandler.CHAT_MEMBER)
+my_chat_member_handler = ChatMemberHandler(handle_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER)
 verification_callback_handler = CallbackQueryHandler(verification_callback, pattern=r"^verify:")
