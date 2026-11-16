@@ -10,6 +10,7 @@
     <div class="card-body">
         <form method="POST">
 <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+<input type="hidden" name="settings_form_marker" value="robot_configuration">
             <div class="row">
                 <div class="col-md-6 mb-3">
                     <label class="form-label">Bot Token</label>
@@ -71,53 +72,7 @@
 
             <hr class="my-4">
             <h6 class="mb-3">🛡️ 入群验证与图片审核（中文 Web 配置）</h6>
-            <div class="card border-0 shadow-sm mb-4">
-  <div class="card-header bg-white"><h6 class="mb-0">🗂️ 日志保留与数据库备份</h6></div>
-  <div class="card-body">
-    <form method="POST" action="{{ url_for('save_log_retention_route') }}" class="mb-4">
-      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-      <p class="text-muted small">日志保留期限作用于审计日志和违规记录，每小时自动清理过期记录；不会重置警告次数或 Telegram 封禁。</p>
-      <label class="form-label" for="log_retention_days">日志保存时间</label>
-      <div class="d-flex gap-2">
-        <select class="form-select" name="log_retention_days" id="log_retention_days">
-          {% for days, label in [('7','7 天'),('30','30 天'),('90','90 天'),('180','180 天'),('365','365 天'),('0','永久保留')] %}
-          <option value="{{ days }}" {% if log_retention_days == days %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-        <button type="submit" class="btn btn-primary text-nowrap">保存保留期限</button>
-      </div>
-      <div class="form-text">本按钮仅保存日志期限，不影响其他系统设置。</div>
-    </form>
-    <hr>
-    <h6>清空全部日志</h6>
-    <p class="text-muted small">清空审计日志和违规记录，不删除用户、警告次数、规则及配置。不可撤销，建议先导出数据库。</p>
-    <form method="POST" action="{{ url_for('clear_logs_route') }}" onsubmit="return confirm('确定永久删除所有审计日志和违规记录？此操作不可撤销。')">
-      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-      <input class="form-control mb-2" name="confirmation" placeholder="请输入：清空所有日志" required autocomplete="off">
-      <input class="form-control mb-2" type="password" name="admin_password_confirm" placeholder="再次输入管理员密码" required autocomplete="off">
-      <button type="submit" class="btn btn-danger">一键清理所有日志（二次确认）</button>
-    </form>
-    <hr>
-    <h6>SQLite 数据库导出</h6>
-    <p class="text-muted small">导出完整数据库，包含用户、设置、违规记录、管理员密码哈希及可能的验证密钥，请妥善保管。</p>
-    <form method="POST" action="{{ url_for('export_database_route') }}" class="mb-3">
-      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-      <input type="password" class="form-control mb-2" name="admin_password_confirm" placeholder="管理员密码" required autocomplete="off">
-      <button type="submit" class="btn btn-outline-primary">导出完整数据库 (.sqlite3)</button>
-    </form>
-    <h6>SQLite 数据库导入 / 恢复</h6>
-    <p class="text-muted small">最大 50MB。先校验 SQLite 完整性和必要表结构，暂存备份，重启整个机器人服务后才恢复。原数据库将备份为 .pre-restore.bak。恢复将覆盖当前数据库中的配置和数据。</p>
-    <form method="POST" action="{{ url_for('import_database_route') }}" enctype="multipart/form-data" onsubmit="return confirm('确认要用上传的备份覆盖当前数据库吗？重启后生效。')">
-      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-      <input class="form-control mb-2" type="file" name="database_file" accept=".sqlite3,.db,.sqlite" required>
-      <input class="form-control mb-2" name="confirmation" placeholder="请输入：确认恢复数据库" required autocomplete="off">
-      <input class="form-control mb-2" type="password" name="admin_password_confirm" placeholder="再次输入管理员密码" required autocomplete="off">
-      <button type="submit" class="btn btn-outline-danger">验证并导入数据库（重启后恢复）</button>
-    </form>
-  </div>
-</div>
-
-<div class="alert alert-info">可选择两种模式：开启“批准新成员”时，申请人先私聊验证后批准；不开启时，新成员进入群后立即尝试禁言，点击群内按钮前往机器人私聊验证，成功解除禁言，超时移出。机器人必须有管理入群申请、限制成员、封禁成员、删除消息权限。直接入群的禁言存在 Telegram 更新延迟，不能保证零窗口。</div>
+            <div class="alert alert-info">可选择两种模式：开启“批准新成员”时，申请人先私聊验证后批准；不开启时，新成员进入群后立即尝试禁言，点击群内按钮前往机器人私聊验证，成功解除禁言，超时移出。机器人必须有管理入群申请、限制成员、封禁成员、删除消息权限。直接入群的禁言存在 Telegram 更新延迟，不能保证零窗口。</div>
             {% for key,label in [('join_approval_enabled','启用申请入群验证（需群开启批准新成员）'),('direct_join_verify_enabled','启用直接入群禁言 → 私聊验证 → 解禁'),('ocr_enabled','本地 RapidOCR 图片文字识别'),('smart_ocr_enabled','智能拼接 OCR（空间排序、文本归一化、分块复检；增加 CPU 消耗）'),('image_hash_enabled','图片感知哈希相似广告拦截'),('observation_enabled','启用新成员观察期'),('observation_block_images','观察期禁止图片'),('observation_block_links','观察期禁止链接'),('observation_block_emoji','观察期禁止发送表情（Emoji、贴纸、GIF）')] %}
             <div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" name="{{ key }}" id="{{ key }}" {% if guard_settings[key]=='1' %}checked{% endif %}><label class="form-check-label" for="{{ key }}">{{ label }}</label></div>
             {% endfor %}
@@ -285,6 +240,53 @@
         </form>
     </div>
 </div>
+
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-header bg-white"><h6 class="mb-0">🗂️ 日志保留与数据库备份</h6></div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('save_log_retention_route') }}" class="mb-4">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <p class="text-muted small">日志保留期限作用于审计日志和违规记录，每小时自动清理过期记录；不会重置警告次数或 Telegram 封禁。</p>
+      <label class="form-label" for="log_retention_days">日志保存时间</label>
+      <div class="d-flex gap-2">
+        <select class="form-select" name="log_retention_days" id="log_retention_days">
+          {% for days, label in [('7','7 天'),('30','30 天'),('90','90 天'),('180','180 天'),('365','365 天'),('0','永久保留')] %}
+          <option value="{{ days }}" {% if log_retention_days == days %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-primary text-nowrap">保存保留期限</button>
+      </div>
+      <div class="form-text">本按钮仅保存日志期限，不影响其他系统设置。</div>
+    </form>
+    <hr>
+    <h6>清空全部日志</h6>
+    <p class="text-muted small">清空审计日志和违规记录，不删除用户、警告次数、规则及配置。不可撤销，建议先导出数据库。</p>
+    <form method="POST" action="{{ url_for('clear_logs_route') }}" onsubmit="return confirm('确定永久删除所有审计日志和违规记录？此操作不可撤销。')">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <input class="form-control mb-2" name="confirmation" placeholder="请输入：清空所有日志" required autocomplete="off">
+      <input class="form-control mb-2" type="password" name="admin_password_confirm" placeholder="再次输入管理员密码" required autocomplete="off">
+      <button type="submit" class="btn btn-danger">一键清理所有日志（二次确认）</button>
+    </form>
+    <hr>
+    <h6>SQLite 数据库导出</h6>
+    <p class="text-muted small">导出完整数据库，包含用户、设置、违规记录、管理员密码哈希及可能的验证密钥，请妥善保管。</p>
+    <form method="POST" action="{{ url_for('export_database_route') }}" class="mb-3">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <input type="password" class="form-control mb-2" name="admin_password_confirm" placeholder="管理员密码" required autocomplete="off">
+      <button type="submit" class="btn btn-outline-primary">导出完整数据库 (.sqlite3)</button>
+    </form>
+    <h6>SQLite 数据库导入 / 恢复</h6>
+    <p class="text-muted small">最大 50MB。先校验 SQLite 完整性和必要表结构，暂存备份，重启整个机器人服务后才恢复。原数据库将备份为 .pre-restore.bak。恢复将覆盖当前数据库中的配置和数据。</p>
+    <form method="POST" action="{{ url_for('import_database_route') }}" enctype="multipart/form-data" onsubmit="return confirm('确认要用上传的备份覆盖当前数据库吗？重启后生效。')">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <input class="form-control mb-2" type="file" name="database_file" accept=".sqlite3,.db,.sqlite" required>
+      <input class="form-control mb-2" name="confirmation" placeholder="请输入：确认恢复数据库" required autocomplete="off">
+      <input class="form-control mb-2" type="password" name="admin_password_confirm" placeholder="再次输入管理员密码" required autocomplete="off">
+      <button type="submit" class="btn btn-outline-danger">验证并导入数据库（重启后恢复）</button>
+    </form>
+  </div>
+</div>
+
 
 <div class="alert alert-info">
     <i class="bi bi-info-circle me-2"></i>

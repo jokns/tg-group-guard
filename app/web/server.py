@@ -472,6 +472,9 @@ def settings():
     global ADMIN_PASSWORD_HASH
     if request.method == "POST":
         data = request.form
+        # Reject partial/misrouted submissions; missing checkboxes must not disable every feature.
+        if data.get("settings_form_marker") != "robot_configuration":
+            abort(400, description="无效的配置表单，请刷新页面后重试")
         # 处理密码：留空则不修改
         new_password = data.get("admin_password", "").strip()
         if new_password:
