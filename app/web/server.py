@@ -391,7 +391,7 @@ def settings():
         audit("web_admin",get_client_ip(),"settings_changed")
         set_setting("mute_duration", mute_duration)
         warning_limit_action = data.get('warning_limit_action', 'ban')
-        set_setting('warning_limit_action', warning_limit_action if warning_limit_action in ('ban', 'kick') else 'ban')
+        set_setting('warning_limit_action', warning_limit_action if warning_limit_action in ('ban', 'kick', 'ban_and_kick') else 'ban')
         for key in ('direct_join_verify_enabled','join_approval_enabled','ocr_enabled','smart_ocr_enabled','image_hash_enabled','observation_enabled','observation_block_images','observation_block_links','observation_block_emoji'):
             set_setting(key, '1' if data.get(key) else '0')
         for key,default,minimum,maximum in (('direct_verify_timeout',300,60,900),('join_approval_timeout',300,60,900),('observation_hours',24,0,720),('image_hash_distance',6,0,16)):
