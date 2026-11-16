@@ -5,6 +5,7 @@ from telegram import Update, BotCommand, BotCommandScopeDefault, BotCommandScope
 from telegram.ext import ApplicationBuilder, CommandHandler
 from app.config import Config
 from app.database import init_db
+from app.db_maintenance import apply_pending_restore
 from app.handlers.join_request import chat_member_handler, verification_callback_handler
 from app.handlers.group_messages import message_handler
 from app.handlers.join_approval import request_handler, start_handler, answer_handler, cleanup
@@ -63,6 +64,8 @@ async def help_command(update, context):
         await update.effective_message.reply_text('🛡️ 群组守护机器人\n如需完成入群验证，请点击群内验证按钮，再按提示操作。')
 
 def main():
+    if apply_pending_restore():
+        logger.warning('Database restored from staged backup on startup')
     init_db()
 
     # 启动 Web 管理后台（守护线程）
