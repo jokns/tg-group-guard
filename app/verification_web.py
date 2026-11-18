@@ -221,6 +221,20 @@ def apply_verification(row, user_id):
             with conn:
                 conn.execute("UPDATE direct_join_verifications SET status='passed' WHERE chat_id=? AND user_id=? AND session_id=?", (chat_id, user_id, row["session_id"]))
                 conn.execute("UPDATE verification_sessions SET status='passed' WHERE id=? AND status='pending'", (row["session_id"],))
+            # Preserve existing post-verification observation and clear the group prompt.
+            from app.handlers.media_guard import mark_observation
+            from app.handlers.join_request import VERIFYING_USERS
+            mark_observation(chat_id, user_id)
+            VERIFYING_USERS.pop((chat_id, user_id), None)
+            prompt = conn.execute(
+                "SELECT message_id FROM direct_join_verifications WHERE chat_id=? AND user_id=?",
+                (chat_id, user_id),
+            ).fetchone()
+            if prompt and prompt["message_id"]:
+                try:
+                    telegram_api("deleteMessage", chat_id=chat_id, message_id=prompt["message_id"])
+                except Exception:
+                    log.warning("Could not remove direct verification prompt chat=%s user=%s", chat_id, user_id)
         else:
             raise ValueError("未知验证类型")
         with conn:
