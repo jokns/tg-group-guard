@@ -242,6 +242,49 @@
 </div>
 
 <div class="card border-0 shadow-sm mb-4">
+  <div class="card-header bg-white"><h6 class="mb-0">🛡️ 入群验证方式（独立保存）</h6></div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('save_verification_settings') }}" autocomplete="off">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="verification_form_marker" value="web_verification">
+      <div class="mb-3">
+        <label class="form-label" for="verification_mode">验证方式</label>
+        <select class="form-select" id="verification_mode" name="verification_mode">
+          <option value="math" {% if verification_mode == 'math' %}selected{% endif %}>数学题验证（默认，兼容旧版本）</option>
+          <option value="cloudflare" {% if verification_mode == 'cloudflare' %}selected{% endif %}>Cloudflare Turnstile 网页验证（Telegram Mini App）</option>
+        </select>
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="math_difficulty">数学题难度</label>
+        <select class="form-select" id="math_difficulty" name="math_difficulty">
+          <option value="easy" {% if math_difficulty == 'easy' %}selected{% endif %}>简单：两位数加减</option>
+          <option value="medium" {% if math_difficulty == 'medium' %}selected{% endif %}>中等：乘减混合（默认）</option>
+          <option value="hard" {% if math_difficulty == 'hard' %}selected{% endif %}>困难：除法及运算优先级</option>
+        </select>
+        <div class="form-text">数学题最多允许答错 2 次，第二次答错后本次验证失败，10 分钟内不能重新申请。</div>
+      </div>
+      <hr>
+      <div class="mb-3">
+        <label class="form-label" for="turnstile_verify_url">验证网页独立域名（HTTPS）</label>
+        <input class="form-control" id="turnstile_verify_url" name="turnstile_verify_url" type="url" maxlength="255" value="{{ turnstile_verify_url }}" placeholder="https://verify.example.com">
+        <div class="form-text">可随时修改，需先完成 Cloudflare DNS、Turnstile 域名授权及 Nginx 配置。旧链接只在原域名仍可访问时有效。</div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="turnstile_site_key">Cloudflare Turnstile Site Key</label>
+        <input class="form-control" id="turnstile_site_key" name="turnstile_site_key" maxlength="255" value="{{ turnstile_site_key }}" autocomplete="off">
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="turnstile_secret_key">Cloudflare Turnstile Secret Key</label>
+        <input class="form-control" id="turnstile_secret_key" name="turnstile_secret_key" type="password" maxlength="255" value="" autocomplete="new-password" placeholder="{% if turnstile_secret_is_set %}已配置，留空保持原密钥{% else %}请填写 Secret Key{% endif %}">
+        <div class="form-text">密钥仅用于服务器调用 Siteverify，页面绝不展示 Secret Key。留空不会清除已保存密钥。</div>
+      </div>
+      <button type="submit" class="btn btn-primary">单独保存验证配置</button>
+      <p class="small text-muted mt-2 mb-0">本表单不提交机器人主配置，不会改变 OCR、观察期、白名单或日志保留期限。</p>
+    </form>
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-4">
   <div class="card-header bg-white"><h6 class="mb-0">🗂️ 日志保留与数据库备份</h6></div>
   <div class="card-body">
     <form method="POST" action="{{ url_for('save_log_retention_route') }}" class="mb-4">
