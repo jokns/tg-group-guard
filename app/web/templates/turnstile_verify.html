@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>群组安全验证</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+<style>body{font-family:system-ui,-apple-system,sans-serif;max-width:440px;margin:36px auto;padding:20px;color:#243044;background:#f7f9fc}.panel{background:#fff;padding:24px;border-radius:18px;box-shadow:0 6px 28px #0001}button{background:#2563eb;color:white;border:0;border-radius:9px;padding:12px 20px;margin-top:16px;width:100%;font-weight:600}button:disabled{opacity:.55}#status{margin-top:16px;white-space:pre-wrap}</style>
+</head><body><div class="panel"><h2>🛡️ 群组安全验证</h2><p>请在 Telegram 内打开本页面并完成 Cloudflare 人机验证。</p><div id="captcha"></div><button id="submit" disabled>完成验证</button><p id="status" role="status"></p></div>
+<script>
+(function(){
+  const status=document.getElementById('status'), btn=document.getElementById('submit');
+  const tg=window.Telegram && window.Telegram.WebApp;
+  const challenge=new URLSearchParams(location.search).get('challenge');
+  let token='';
+  if(!tg || !tg.initData || !challenge){status.textContent='请通过机器人私信中的「打开验证网页」按钮进入。';return;}
+  tg.ready();tg.expand();
+  function load(){
+    if(!window.turnstile){setTimeout(load,150);return;}
+    turnstile.render('#captcha',{
+      sitekey:{{ site_key|tojson }},
+      action:'join_verify',
+      callback:function(value){token=value;btn.disabled=false;status.textContent='验证已完成，请点击下方按钮。';},
+      'expired-callback':function(){token='';btn.disabled=true;status.textContent='验证已过期，请重新完成。';},
+      'error-callback':function(){token='';btn.disabled=true;status.textContent='Cloudflare 验证加载失败，请重试。';}
+    });
+  }
+  load();
+  btn.addEventListener('click',async function(){
+    if(!token)return;
+    btn.disabled=true;status.textContent='正在核验并处理入群申请…';
+    try{
+      const response=await fetch('/verify/api/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({init_data:tg.initData,challenge:challenge,turnstile_token:token}),credentials:'omit'});
+      const result=await response.json();
+      status.textContent=result.message||'验证失败';
+      if(result.ok){btn.style.display='none';setTimeout(function(){tg.close();},1800);}
+      else{token='';if(window.turnstile)turnstile.reset();}
+    }catch(e){status.textContent='网络错误，请重试';token='';if(window.turnstile)turnstile.reset();}
+  });
+})();
+</script></body></html>

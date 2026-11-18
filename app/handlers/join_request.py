@@ -7,6 +7,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPer
 from telegram.ext import ContextTypes, ChatMemberHandler, CallbackQueryHandler
 from app.database import get_conn, get_setting
 from app.config import Config
+from app.math_verification import new_question, cooldown_remaining, start_cooldown
+from app.verification_web import verification_mode, turnstile_ready
 
 def _get_verify_timeout():
     val = get_setting("verify_timeout", "")
@@ -25,29 +27,16 @@ def _cancel_del_job(context, session_id):
         pass
 
 def generate_question(session_id: int, user_mention: str = ""):
-    a = random.randint(1, 10)
-    b = random.randint(1, 10)
-    answer = a + b
-    wrong1 = answer + random.randint(1, 5)
-    while wrong1 == answer:
-        wrong1 = answer + random.randint(1, 5)
-    wrong2 = abs(answer - random.randint(1, 5))
-    while wrong2 == answer:
-        wrong2 = abs(answer - random.randint(1, 5))
-    # 三个选项：正确答案 + 两个错误答案
-    options = [str(answer), str(wrong1), str(wrong2)]
-    random.shuffle(options)
-    
-    # 把正确答案存入数据库，callback_data 只传 session_id + 用户选的值
+    question, answer, options = new_question()
     conn = get_conn()
-    c = conn.cursor()
-    c.execute("UPDATE verification_sessions SET question=?, answer=? WHERE id=?",
-              (f"{a}+{b}", str(answer), session_id))
-    conn.commit()
-    conn.close()
-    
+    try:
+        conn.execute("UPDATE verification_sessions SET question=?, answer=? WHERE id=? AND status='pending'",
+                     (question, str(answer), session_id))
+        conn.commit()
+    finally:
+        conn.close()
     mention_line = f"{user_mention} " if user_mention else ""
-    text = f"🛡️ 入群验证\n\n{mention_line}为了确认你不是机器人，请在群内直接回答：\n{a} + {b} = ?"
+    text = f"🛡️ 入群验证\n\n{mention_line}为了确认你不是机器人，请在私聊中回答：\n{question} = ?"
     # callback_data 格式: verify:{session_id}:{selected_value}  ← 不含正确答案
     keyboard = [[InlineKeyboardButton(opt, callback_data=f"verify:{session_id}:{opt}")]
                 for opt in options]
@@ -238,8 +227,17 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     conn = get_conn()
     c = conn.cursor()
-    c.execute("INSERT INTO verification_sessions (user_id, chat_id, question, answer) VALUES (?, ?, ?, ?)",
-              (user.id, chat.id, "", ""))
+    if cooldown_remaining(chat.id,user.id):
+        await kick_member(chat.id,user.id,context)
+        logger.warning("Direct join cooldown active chat=%s user=%s",chat.id,user.id)
+        return
+    mode=verification_mode()
+    if mode == 'cloudflare' and not turnstile_ready():
+        logger.error("Cloudflare verification not configured; rejecting direct join chat=%s user=%s",chat.id,user.id)
+        await kick_member(chat.id,user.id,context)
+        return
+    c.execute("INSERT INTO verification_sessions (user_id, chat_id, question, answer, verify_mode) VALUES (?, ?, ?, ?, ?)",
+              (user.id, chat.id, "", "", mode))
     conn.commit()
     session_id = c.lastrowid
     conn.close()
@@ -253,10 +251,10 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ttl = 300
     expires = int(time.time()) + ttl
     conn = get_conn()
-    conn.execute("""INSERT INTO direct_join_verifications(chat_id,user_id,token,session_id,expires_at,status,message_id)
-        VALUES(?,?,?,?,?,'pending',NULL) ON CONFLICT(chat_id,user_id) DO UPDATE SET
+    conn.execute("""INSERT INTO direct_join_verifications(chat_id,user_id,token,session_id,expires_at,status,message_id,verify_mode)
+        VALUES(?,?,?,?,?,'pending',NULL,?) ON CONFLICT(chat_id,user_id) DO UPDATE SET
         token=excluded.token,session_id=excluded.session_id,expires_at=excluded.expires_at,
-        status='pending',message_id=NULL""", (chat.id,user.id,token,session_id,expires))
+        status='pending',message_id=NULL,verify_mode=excluded.verify_mode""", (chat.id,user.id,token,session_id,expires,mode))
     conn.commit(); conn.close()
     try:
         bot_username = (await context.bot.get_me()).username
@@ -327,7 +325,6 @@ async def auto_kick(context: ContextTypes.DEFAULT_TYPE):
 
 async def verification_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     
     data = query.data.split(":")
     if len(data) != 3 or data[0] != "verify":
@@ -345,8 +342,8 @@ async def verification_callback(update: Update, context: ContextTypes.DEFAULT_TY
     c.execute("SELECT * FROM verification_sessions WHERE id = ? AND status = 'pending'", (session_id,))
     session = c.fetchone()
     
-    if not session:
-        await query.edit_message_text("⚠️ 验证已过期或不存在，请重新加入群组。")
+    if not session or session['verify_mode'] != 'math':
+        await query.edit_message_text("⚠️ 验证已过期或验证方式不匹配，请重新加入群组。")
         conn.close()
         return
     
@@ -360,10 +357,14 @@ async def verification_callback(update: Update, context: ContextTypes.DEFAULT_TY
     correct_answer = str(session["answer"]) if session["answer"] else ""
     
     # 只接受仍处于有效期的直接入群私聊验证。
-    direct = c.execute("SELECT expires_at,status,message_id FROM direct_join_verifications WHERE session_id=? AND user_id=?",(session_id,user_id)).fetchone()
-    if direct and (direct['status'] != 'pending' or direct['expires_at'] < int(time.time())):
+    direct = c.execute("SELECT expires_at,status,message_id,verify_mode FROM direct_join_verifications WHERE session_id=? AND user_id=?",(session_id,user_id)).fetchone()
+    if direct and (direct['status'] != 'pending' or direct['verify_mode'] != 'math' or direct['expires_at'] < int(time.time())):
         conn.close()
         await query.answer('验证已过期，请重新入群',show_alert=True)
+        return
+    if cooldown_remaining(chat_id,user_id):
+        conn.close()
+        await query.answer("验证冷却中，请 10 分钟后再试",show_alert=True)
         return
     if selected == correct_answer:
         c.execute("UPDATE verification_sessions SET status = 'passed' WHERE id = ?", (session_id,))
@@ -373,6 +374,7 @@ async def verification_callback(update: Update, context: ContextTypes.DEFAULT_TY
         conn.commit()
         conn.close()
         
+        await query.answer("验证成功")
         await query.edit_message_text("✅ 验证通过！你现在可以在群里正常发言了。")
         from app.handlers.media_guard import mark_observation
         mark_observation(chat_id,user_id)
@@ -392,25 +394,22 @@ async def verification_callback(update: Update, context: ContextTypes.DEFAULT_TY
             name=f"del_verify_done_{session_id}"
         )
     else:
-        c.execute("UPDATE verification_sessions SET status = 'failed' WHERE id = ?", (session_id,))
-        c.execute("UPDATE direct_join_verifications SET status='failed' WHERE session_id=? AND status='pending'", (session_id,))
-        conn.commit()
-        conn.close()
-        
-        await query.edit_message_text("❌ 答案错误，验证失败。你已被移出群组，可以重新加入再试。")
-        await kick_member(chat_id, user_id, context)
+        attempts = session['attempts'] + 1
+        if attempts < 2:
+            c.execute("UPDATE verification_sessions SET attempts=? WHERE id=? AND status='pending'",(attempts,session_id))
+            conn.commit();conn.close()
+            await query.answer("答案错误，还剩 1 次机会",show_alert=True)
+            return
+        c.execute("UPDATE verification_sessions SET status='failed',attempts=? WHERE id=?",(attempts,session_id))
+        c.execute("UPDATE direct_join_verifications SET status='failed' WHERE session_id=? AND status='pending'",(session_id,))
+        conn.commit();conn.close()
+        start_cooldown(chat_id,user_id)
+        await query.edit_message_text("❌ 两次回答错误，验证失败。10 分钟后可重新加入再试。")
+        await kick_member(chat_id,user_id,context)
         if direct and direct['message_id']:
             try: await context.bot.delete_message(chat_id,direct['message_id'])
             except Exception: pass
-        VERIFYING_USERS.pop((chat_id, user_id), None)
-        # 3 秒后删除验证消息
-        _cancel_del_job(context, session_id)
-        context.job_queue.run_once(
-            auto_delete_welcome,
-            when=3,
-            data={"chat_id": query.message.chat_id, "message_id": query.message.message_id},
-            name=f"del_verify_done_{session_id}"
-        )
+        VERIFYING_USERS.pop((chat_id,user_id),None)
 
 chat_member_handler = ChatMemberHandler(handle_chat_member, ChatMemberHandler.CHAT_MEMBER)
 my_chat_member_handler = ChatMemberHandler(handle_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER)

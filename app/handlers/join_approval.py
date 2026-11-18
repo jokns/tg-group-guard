@@ -4,40 +4,56 @@ import hmac
 import logging
 import secrets
 import time
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
 from telegram.ext import ChatJoinRequestHandler, CommandHandler, CallbackQueryHandler, ContextTypes
 from app.database import get_conn, get_setting, is_chat_allowed
+from app.math_verification import new_question, cooldown_remaining, start_cooldown
+from app.verification_web import verification_mode, verification_url, turnstile_ready, create_challenge
 
 log = logging.getLogger(__name__)
 def enabled(): return get_setting('join_approval_enabled','1') == '1'
 def timeout(): return max(60,min(900,int(get_setting('join_approval_timeout','300'))))
 def _digest(token, answer): return hashlib.sha256(f'{token}:{answer}'.encode()).hexdigest()
 
-def _challenge(chat_id,user_id):
-    # 题目随机、选项随机，单次 token 不可预测；不能代替专业 CAPTCHA
-    import random
-    a,b = secrets.randbelow(18)+2,secrets.randbelow(18)+2
-    answer = a+b
-    wrong = set()
-    while len(wrong)<3:
-        n = answer + secrets.randbelow(17)-8
-        if n!=answer and n>0: wrong.add(n)
-    opts = list(wrong)+[answer]
-    random.SystemRandom().shuffle(opts)
+def _challenge(chat_id,user_id, preserve_attempts=False):
+    question, answer, opts = new_question()
     token=secrets.token_urlsafe(12)
     conn=get_conn()
     conn.execute("""INSERT INTO join_requests(chat_id,user_id,token,answer_hash,expires_at,status,attempts)
       VALUES(?,?,?,?,?,'pending',0) ON CONFLICT(chat_id,user_id) DO UPDATE SET
-      token=excluded.token,answer_hash=excluded.answer_hash,expires_at=excluded.expires_at,status='pending',attempts=0""",
-      (chat_id,user_id,token,_digest(token,str(answer)),int(time.time())+timeout()))
+      token=excluded.token,answer_hash=excluded.answer_hash,expires_at=CASE WHEN ? THEN join_requests.expires_at ELSE excluded.expires_at END,status='pending',attempts=CASE WHEN ? THEN join_requests.attempts ELSE 0 END,verify_mode='math'""", 
+      (chat_id,user_id,token,_digest(token,str(answer)),int(time.time())+timeout(),int(preserve_attempts),int(preserve_attempts)))
     conn.commit();conn.close()
     markup=InlineKeyboardMarkup([[InlineKeyboardButton(str(n),callback_data=f'ja:{chat_id}:{token}:{n}')] for n in opts])
-    return f'🛡️ 入群申请验证\n请在 {timeout()//60} 分钟内回答：{a} + {b} = ?\n验证通过后自动批准入群。',markup
+    return f'🛡️ 入群申请验证\n请在 {timeout()} 秒内回答：{question} = ?\n验证通过后自动批准入群。',markup
 
 async def on_request(update:Update,ctx:ContextTypes.DEFAULT_TYPE):
     req=update.chat_join_request
     if not req or not enabled() or not is_chat_allowed(req.chat.id):return
-    text,markup=_challenge(req.chat.id,req.from_user.id)
+    remaining = cooldown_remaining(req.chat.id, req.from_user.id)
+    if remaining:
+        log.warning("Join request in cooldown chat=%s user=%s remaining=%s", req.chat.id, req.from_user.id, remaining)
+        try: await ctx.bot.decline_chat_join_request(req.chat.id, req.from_user.id)
+        except Exception: log.exception("Could not decline cooldown request")
+        return
+    mode = verification_mode()
+    if mode == 'cloudflare':
+        if not turnstile_ready():
+            log.error("Cloudflare mode configured but keys/URL missing; request kept unapproved")
+            return
+        token = secrets.token_urlsafe(12)
+        conn=get_conn()
+        with conn:
+            conn.execute("""INSERT INTO join_requests(chat_id,user_id,token,answer_hash,expires_at,status,attempts,verify_mode)
+                VALUES(?,?,?,'',?,'pending',0,'cloudflare')
+                ON CONFLICT(chat_id,user_id) DO UPDATE SET token=excluded.token,answer_hash='',expires_at=excluded.expires_at,status='pending',attempts=0,verify_mode='cloudflare'""",
+                (req.chat.id,req.from_user.id,token,int(time.time())+timeout()))
+        conn.close()
+        challenge=create_challenge(req.chat.id,req.from_user.id,'request',expires_at=int(time.time())+timeout())
+        text='🛡️ 入群安全验证\n请点击下方按钮，在 Telegram 内完成 Cloudflare 人机验证。'
+        markup=InlineKeyboardMarkup([[InlineKeyboardButton('🌐 打开验证网页',web_app=WebAppInfo(url=f'{verification_url()}/verify?challenge={challenge}'))]])
+    else:
+        text,markup=_challenge(req.chat.id,req.from_user.id)
     try:
         await ctx.bot.send_message(chat_id=req.user_chat_id,text=text,reply_markup=markup)
     except Exception as exc:
@@ -60,12 +76,23 @@ async def on_start(update:Update,ctx:ContextTypes.DEFAULT_TYPE):
         conn.close()
         if not row:
             await update.message.reply_text('验证链接已失效，请重新申请入群。');return
-        from app.handlers.join_request import generate_question
-        text,_,keyboard=generate_question(sid)
-        await update.message.reply_text(text.replace('请在群内直接回答','请在私聊中点击按钮回答'),reply_markup=InlineKeyboardMarkup(keyboard))
+        if cooldown_remaining(row['chat_id'],user_id):
+            await update.message.reply_text('答题次数已用完，请 10 分钟后重新验证。')
+            return
+        if row['verify_mode'] == 'cloudflare':
+            if not turnstile_ready():
+                await update.message.reply_text('网页验证暂不可用，请联系管理员。')
+                return
+            challenge=create_challenge(row['chat_id'],user_id,'direct',session_id=sid,expires_at=row['expires_at'])
+            markup=InlineKeyboardMarkup([[InlineKeyboardButton('🌐 打开验证网页',web_app=WebAppInfo(url=f'{verification_url()}/verify?challenge={challenge}'))]])
+            await update.message.reply_text('🛡️ 请打开验证网页完成 Cloudflare 人机验证，验证成功后自动解除禁言。',reply_markup=markup)
+        else:
+            from app.handlers.join_request import generate_question
+            text,_,keyboard=generate_question(sid)
+            await update.message.reply_text(text.replace('请在群内直接回答','请在私聊中点击按钮回答'),reply_markup=InlineKeyboardMarkup(keyboard))
         return
     conn=get_conn()
-    rows=conn.execute("SELECT chat_id FROM join_requests WHERE user_id=? AND status='pending' AND expires_at>?",(user_id,int(time.time()))).fetchall()
+    rows=conn.execute("SELECT chat_id,verify_mode,expires_at FROM join_requests WHERE user_id=? AND status='pending' AND expires_at>?",(user_id,int(time.time()))).fetchall()
     conn.close()
     if not rows:
         from app.config import Config
@@ -74,8 +101,19 @@ async def on_start(update:Update,ctx:ContextTypes.DEFAULT_TYPE):
             await panel(update,ctx)
         return
     for row in rows:
-        text,markup=_challenge(row['chat_id'],user_id)
-        await update.message.reply_text(text,reply_markup=markup)
+        if cooldown_remaining(row['chat_id'],user_id):
+            await update.message.reply_text('答题次数已用完，请稍后再试。')
+            continue
+        if row['verify_mode'] == 'cloudflare':
+            if not turnstile_ready():
+                await update.message.reply_text('网页验证暂不可用，请联系管理员。')
+                continue
+            challenge=create_challenge(row['chat_id'],user_id,'request',expires_at=row['expires_at'])
+            markup=InlineKeyboardMarkup([[InlineKeyboardButton('🌐 打开验证网页',web_app=WebAppInfo(url=f'{verification_url()}/verify?challenge={challenge}'))]])
+            await update.message.reply_text('🛡️ 请打开验证网页完成人机验证。',reply_markup=markup)
+        else:
+            text,markup=_challenge(row['chat_id'],user_id,preserve_attempts=True)
+            await update.message.reply_text(text,reply_markup=markup)
 
 async def on_answer(update:Update,ctx:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query
@@ -86,7 +124,7 @@ async def on_answer(update:Update,ctx:ContextTypes.DEFAULT_TYPE):
     user_id=q.from_user.id
     conn=get_conn()
     row=conn.execute("SELECT * FROM join_requests WHERE chat_id=? AND user_id=?",(chat_id,user_id)).fetchone()
-    if not row or row['status']!='pending' or not hmac.compare_digest(row['token'],token):
+    if not row or row['status']!='pending' or row['verify_mode']!='math' or not hmac.compare_digest(row['token'],token):
         conn.close();await q.answer('验证已失效，请重新申请',show_alert=True);return
     if row['expires_at']<int(time.time()):
         conn.execute("UPDATE join_requests SET status='timeout' WHERE chat_id=? AND user_id=?",(chat_id,user_id));conn.commit();conn.close()
@@ -94,12 +132,20 @@ async def on_answer(update:Update,ctx:ContextTypes.DEFAULT_TYPE):
         except Exception:log.exception('拒绝超时申请失败')
         await q.answer('验证超时',show_alert=True);return
     if not hmac.compare_digest(row['answer_hash'],_digest(token,answer)):
-        conn.execute("UPDATE join_requests SET status='failed',attempts=attempts+1 WHERE chat_id=? AND user_id=?",(chat_id,user_id));conn.commit();conn.close()
-        try:await ctx.bot.decline_chat_join_request(chat_id,user_id)
-        except Exception:log.exception('拒绝错误答案申请失败')
-        await q.answer('答案错误，申请已拒绝',show_alert=True)
-        try:await q.edit_message_text('❌ 验证失败，请重新申请入群。')
-        except Exception:pass
+        attempts=row['attempts']+1
+        if attempts>=2:
+            conn.execute("UPDATE join_requests SET status='failed',attempts=? WHERE chat_id=? AND user_id=?",(attempts,chat_id,user_id))
+            conn.commit();conn.close()
+            start_cooldown(chat_id,user_id)
+            try:await ctx.bot.decline_chat_join_request(chat_id,user_id)
+            except Exception:log.exception('拒绝错误答案申请失败')
+            await q.answer('两次回答错误，请 10 分钟后重试',show_alert=True)
+            try:await q.edit_message_text('❌ 两次回答错误，本次验证失败。10 分钟后可重新申请。')
+            except Exception:pass
+            return
+        conn.execute("UPDATE join_requests SET attempts=? WHERE chat_id=? AND user_id=?",(attempts,chat_id,user_id))
+        conn.commit();conn.close()
+        await q.answer('答案错误，还剩 1 次机会',show_alert=True)
         return
     # 先标记批准中，避免 Telegram 的 chat_member 事件抢先到达并误踢用户。
     conn.execute("UPDATE join_requests SET status='approving' WHERE chat_id=? AND user_id=? AND token=?",(chat_id,user_id,token))
