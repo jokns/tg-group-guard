@@ -168,6 +168,13 @@ async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TY
         logger.exception("Bot failed to leave non-whitelisted group chat=%s", chat_id)
 
 
+def is_present_member(member):
+    """Whether a Telegram ChatMember represents a user currently in the group."""
+    return member.status in ("member", "administrator", "creator") or (
+        member.status == "restricted" and bool(getattr(member, "is_member", False))
+    )
+
+
 async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.chat_member:
         return
@@ -189,13 +196,8 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # Telegram represents membership using both status and restricted.is_member.
     # A restricted -> member transition is not a fresh join; left -> restricted(is_member=True) is.
-    def is_present(member):
-        return member.status in ("member", "administrator", "creator") or (
-            member.status == "restricted" and bool(getattr(member, "is_member", False))
-        )
-
-    was_present = is_present(old)
-    now_present = is_present(new)
+    was_present = is_present_member(old)
+    now_present = is_present_member(new)
     logger.info(
         "CHAT_MEMBER_EVENT chat=%s user=%s old=%s old_member=%s new=%s new_member=%s",
         chat.id, new.user.id, old.status, getattr(old, "is_member", None),
