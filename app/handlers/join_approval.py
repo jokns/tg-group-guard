@@ -15,14 +15,14 @@ def enabled(): return get_setting('join_approval_enabled','1') == '1'
 def timeout(): return max(60,min(900,int(get_setting('join_approval_timeout','300'))))
 def _digest(token, answer): return hashlib.sha256(f'{token}:{answer}'.encode()).hexdigest()
 
-def _challenge(chat_id,user_id):
+def _challenge(chat_id,user_id, preserve_attempts=False):
     question, answer, opts = new_question()
     token=secrets.token_urlsafe(12)
     conn=get_conn()
     conn.execute("""INSERT INTO join_requests(chat_id,user_id,token,answer_hash,expires_at,status,attempts)
       VALUES(?,?,?,?,?,'pending',0) ON CONFLICT(chat_id,user_id) DO UPDATE SET
-      token=excluded.token,answer_hash=excluded.answer_hash,expires_at=excluded.expires_at,status='pending',attempts=0""",
-      (chat_id,user_id,token,_digest(token,str(answer)),int(time.time())+timeout()))
+      token=excluded.token,answer_hash=excluded.answer_hash,expires_at=CASE WHEN ? THEN join_requests.expires_at ELSE excluded.expires_at END,status='pending',attempts=CASE WHEN ? THEN join_requests.attempts ELSE 0 END,verify_mode='math'""", 
+      (chat_id,user_id,token,_digest(token,str(answer)),int(time.time())+timeout(),int(preserve_attempts),int(preserve_attempts)))
     conn.commit();conn.close()
     markup=InlineKeyboardMarkup([[InlineKeyboardButton(str(n),callback_data=f'ja:{chat_id}:{token}:{n}')] for n in opts])
     return f'🛡️ 入群申请验证\n请在 {timeout()} 秒内回答：{question} = ?\n验证通过后自动批准入群。',markup
@@ -92,7 +92,7 @@ async def on_start(update:Update,ctx:ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(text.replace('请在群内直接回答','请在私聊中点击按钮回答'),reply_markup=InlineKeyboardMarkup(keyboard))
         return
     conn=get_conn()
-    rows=conn.execute("SELECT chat_id,verify_mode FROM join_requests WHERE user_id=? AND status='pending' AND expires_at>?",(user_id,int(time.time()))).fetchall()
+    rows=conn.execute("SELECT chat_id,verify_mode,expires_at FROM join_requests WHERE user_id=? AND status='pending' AND expires_at>?",(user_id,int(time.time()))).fetchall()
     conn.close()
     if not rows:
         from app.config import Config
@@ -108,11 +108,11 @@ async def on_start(update:Update,ctx:ContextTypes.DEFAULT_TYPE):
             if not turnstile_ready():
                 await update.message.reply_text('网页验证暂不可用，请联系管理员。')
                 continue
-            challenge=create_challenge(row['chat_id'],user_id,'request')
+            challenge=create_challenge(row['chat_id'],user_id,'request',expires_at=row['expires_at'])
             markup=InlineKeyboardMarkup([[InlineKeyboardButton('🌐 打开验证网页',web_app=WebAppInfo(url=f'{verification_url()}/verify?challenge={challenge}'))]])
             await update.message.reply_text('🛡️ 请打开验证网页完成人机验证。',reply_markup=markup)
         else:
-            text,markup=_challenge(row['chat_id'],user_id)
+            text,markup=_challenge(row['chat_id'],user_id,preserve_attempts=True)
             await update.message.reply_text(text,reply_markup=markup)
 
 async def on_answer(update:Update,ctx:ContextTypes.DEFAULT_TYPE):
