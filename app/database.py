@@ -119,6 +119,12 @@ def init_db():
         status TEXT NOT NULL DEFAULT 'pending', message_id INTEGER,
         PRIMARY KEY(chat_id,user_id))""")
     # Web verification challenges: one-time, bound to Telegram identity and group.
+    c.execute("""CREATE TABLE IF NOT EXISTS welcome_delivery (
+        chat_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        delivered_at INTEGER NOT NULL,
+        PRIMARY KEY(chat_id, user_id)
+    )""")
     c.execute("""CREATE TABLE IF NOT EXISTS web_verifications (
         challenge TEXT PRIMARY KEY,
         chat_id INTEGER NOT NULL,

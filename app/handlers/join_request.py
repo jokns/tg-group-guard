@@ -93,23 +93,48 @@ def format_welcome_message(template: str, user) -> str:
                    .replace("{user_id}", str(user.id))
 
 async def send_welcome(chat_id: int, user, context: ContextTypes.DEFAULT_TYPE):
-    """发送群内欢迎语，并在 60 秒后自动删除"""
+    """发送群内欢迎语并定时删除；同一入群会话只发送一次。
+
+    Claim is stored in SQLite so the web callback and chat_member update cannot
+    both send a welcome. The claim is released on send failure for retry.
+    """
+    template = get_setting("welcome_message", "")
+    if not template or not template.strip():
+        return
+    conn = get_conn()
     try:
-        template = get_setting("welcome_message", "")
-        if not template or not template.strip():
+        with conn:
+            claimed = conn.execute(
+                """INSERT OR IGNORE INTO welcome_delivery(chat_id,user_id,delivered_at)
+                   VALUES(?,?,?)""", (chat_id, user.id, int(time.time()))
+            ).rowcount
+        if not claimed:
             return
+    finally:
+        conn.close()
+    try:
         text = format_welcome_message(template, user)
         msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
-        # 60 秒后自动删除欢迎语
+    except Exception:
+        conn = get_conn()
+        try:
+            with conn:
+                conn.execute("DELETE FROM welcome_delivery WHERE chat_id=? AND user_id=?",
+                             (chat_id, user.id))
+        finally:
+            conn.close()
+        logger.exception("Send welcome message failed chat=%s user=%s", chat_id, user.id)
+        return
+    try:
         delete_delay = int(get_setting("welcome_delete_delay", "60"))
         context.job_queue.run_once(
             auto_delete_welcome,
-            when=delete_delay,
+            when=max(1, delete_delay),
             data={"chat_id": chat_id, "message_id": msg.message_id},
             name=f"del_welcome_{msg.message_id}"
         )
-    except Exception as e:
-        logger.warning(f"Send welcome message failed: {e}")
+    except Exception:
+        logger.exception("Schedule welcome deletion failed chat=%s message=%s", chat_id, msg.message_id)
 
 async def auto_delete_welcome(context: ContextTypes.DEFAULT_TYPE):
     """定时删除欢迎语消息"""
@@ -236,6 +261,8 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.error("Cloudflare verification not configured; rejecting direct join chat=%s user=%s",chat.id,user.id)
         await kick_member(chat.id,user.id,context)
         return
+    # A fresh direct-join verification starts a new welcome lifecycle.
+    c.execute("DELETE FROM welcome_delivery WHERE chat_id=? AND user_id=?", (chat.id, user.id))
     c.execute("INSERT INTO verification_sessions (user_id, chat_id, question, answer, verify_mode) VALUES (?, ?, ?, ?, ?)",
               (user.id, chat.id, "", "", mode))
     conn.commit()

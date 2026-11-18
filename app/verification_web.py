@@ -241,4 +241,10 @@ def apply_verification(row, user_id):
             conn.execute("INSERT INTO users(user_id,passed_verification) VALUES (?,1) ON CONFLICT(user_id) DO UPDATE SET passed_verification=1", (user_id,))
     finally:
         conn.close()
+    # Dispatch via Telegram's running event loop; Flask must not own Bot/JobQueue.
+    from app.welcome_bridge import notify_verified
+    try:
+        notify_verified(chat_id, user_id)
+    except Exception:
+        log.exception("Could not queue welcome chat=%s user=%s", chat_id, user_id)
     log.info("Turnstile verification passed chat=%s user=%s kind=%s", chat_id, user_id, row["kind"])
