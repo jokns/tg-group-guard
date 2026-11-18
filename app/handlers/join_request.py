@@ -224,10 +224,6 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception:
         pass
     
-    # A new membership starts a new welcome lifecycle, including rejoining users.
-    # Avoid deleting a claim already made by a completed web verification.
-    from app.welcome_bridge import reset_welcome_if_new_join
-    reset_welcome_if_new_join(chat.id, user.id)
     logger.info(f"New member joined: user={user.id} chat={chat.id}")
     
     # 先限制权限（禁言）；失败则踢出，防止未经验证的账号发广告。
