@@ -168,6 +168,13 @@ async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TY
         logger.exception("Bot failed to leave non-whitelisted group chat=%s", chat_id)
 
 
+def is_present_member(member):
+    """Whether a Telegram ChatMember represents a user currently in the group."""
+    return member.status in ("member", "administrator", "creator") or (
+        member.status == "restricted" and bool(getattr(member, "is_member", False))
+    )
+
+
 async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.chat_member:
         return
@@ -187,8 +194,39 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 logger.warning(f"Failed to leave chat {chat.id}: {e}")
         return
     
-    # 只处理真正新加入的（从 left/kicked 变为 member）
-    if new.status != "member" or old.status not in ("left", "kicked"):
+    # Telegram represents membership using both status and restricted.is_member.
+    # A restricted -> member transition is not a fresh join; left -> restricted(is_member=True) is.
+    was_present = is_present_member(old)
+    now_present = is_present_member(new)
+    logger.info(
+        "CHAT_MEMBER_EVENT chat=%s user=%s old=%s old_member=%s new=%s new_member=%s",
+        chat.id, new.user.id, old.status, getattr(old, "is_member", None),
+        new.status, getattr(new, "is_member", None),
+    )
+
+    if was_present and not now_present:
+        # Only actual departures invalidate previous approvals and welcome claims.
+        # Preserve user account and moderation history.
+        conn = get_conn()
+        try:
+            with conn:
+                conn.execute("DELETE FROM join_requests WHERE chat_id=? AND user_id=?", (chat.id, new.user.id))
+                conn.execute("DELETE FROM welcome_delivery WHERE chat_id=? AND user_id=?", (chat.id, new.user.id))
+                conn.execute(
+                    "UPDATE direct_join_verifications SET status='left' WHERE chat_id=? AND user_id=? AND status IN ('pending','approving')",
+                    (chat.id, new.user.id),
+                )
+                conn.execute(
+                    "UPDATE verification_sessions SET status='left' WHERE chat_id=? AND user_id=? AND status='pending'",
+                    (chat.id, new.user.id),
+                )
+        finally:
+            conn.close()
+        VERIFYING_USERS.pop((chat.id, new.user.id), None)
+        logger.info("Member left; join verification invalidated chat=%s user=%s", chat.id, new.user.id)
+        return
+
+    if was_present or not now_present:
         return
     
     user = new.user
