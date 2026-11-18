@@ -36,6 +36,14 @@ async def on_request(update:Update,ctx:ContextTypes.DEFAULT_TYPE):
         try: await ctx.bot.decline_chat_join_request(req.chat.id, req.from_user.id)
         except Exception: log.exception("Could not decline cooldown request")
         return
+    # New join request starts a new welcome lifecycle; do not reset on /start.
+    conn = get_conn()
+    try:
+        with conn:
+            conn.execute("DELETE FROM welcome_delivery WHERE chat_id=? AND user_id=?",
+                         (req.chat.id, req.from_user.id))
+    finally:
+        conn.close()
     mode = verification_mode()
     if mode == 'cloudflare':
         if not turnstile_ready():
