@@ -118,6 +118,31 @@ def init_db():
         session_id INTEGER NOT NULL, expires_at INTEGER NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending', message_id INTEGER,
         PRIMARY KEY(chat_id,user_id))""")
+    # Web verification challenges: one-time, bound to Telegram identity and group.
+    c.execute("""CREATE TABLE IF NOT EXISTS web_verifications (
+        challenge TEXT PRIMARY KEY,
+        chat_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('request','direct')),
+        session_id INTEGER,
+        expires_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+    )""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_web_verify_user ON web_verifications(chat_id,user_id,kind)")
+    c.execute("""CREATE TABLE IF NOT EXISTS verification_cooldowns (
+        chat_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        until_ts INTEGER NOT NULL,
+        PRIMARY KEY(chat_id,user_id)
+    )""")
+    # Add columns to existing SQLite installations without resetting data.
+    for table in ("verification_sessions", "join_requests", "direct_join_verifications"):
+        columns = {row[1] for row in c.execute(f"PRAGMA table_info({table})")}
+        if "verify_mode" not in columns:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN verify_mode TEXT NOT NULL DEFAULT 'math'")
+    columns = {row[1] for row in c.execute("PRAGMA table_info(verification_sessions)")}
+    if "attempts" not in columns:
+        c.execute("ALTER TABLE verification_sessions ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0")
     c.execute("""CREATE TABLE IF NOT EXISTS audit_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL,
         category TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL,
