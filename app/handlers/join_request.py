@@ -325,7 +325,6 @@ async def auto_kick(context: ContextTypes.DEFAULT_TYPE):
 
 async def verification_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     
     data = query.data.split(":")
     if len(data) != 3 or data[0] != "verify":
