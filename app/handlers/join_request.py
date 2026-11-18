@@ -261,6 +261,8 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.error("Cloudflare verification not configured; rejecting direct join chat=%s user=%s",chat.id,user.id)
         await kick_member(chat.id,user.id,context)
         return
+    # A fresh direct-join verification starts a new welcome lifecycle.
+    c.execute("DELETE FROM welcome_delivery WHERE chat_id=? AND user_id=?", (chat.id, user.id))
     c.execute("INSERT INTO verification_sessions (user_id, chat_id, question, answer, verify_mode) VALUES (?, ?, ?, ?, ?)",
               (user.id, chat.id, "", "", mode))
     conn.commit()
