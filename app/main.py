@@ -30,6 +30,8 @@ async def audit_cleanup_job(ctx):
     await asyncio.to_thread(cleanup_audit)
 
 async def register_command_menu(application):
+    from app.welcome_bridge import register
+    register(application)
     """Use Telegram native command menu, with per-admin private-chat scope."""
     public = [BotCommand('start', '开始使用 / 入群验证'), BotCommand('help', '查看使用说明')]
     private_admin = [
