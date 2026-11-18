@@ -2,6 +2,8 @@
 
 一个轻量级的 Telegram 群组管理机器人，支持入群验证、垃圾信息拦截、违禁词在线管理和管理员命令。
 
+> 新增可选 **Cloudflare Turnstile + Telegram Mini App** 网页入群验证，以及增强的数学题验证（最多答错两次、10 分钟冷却）。独立域名、Cloudflare Site Key/Secret Key、Nginx、BotFather 和安全配置说明参见 [Cloudflare 验证部署指南](docs/CLOUDFLARE_TURNSTILE_VERIFICATION.md)。默认仍为数学题模式，升级后不会自动启用 Cloudflare。
+
 ## ✨ 功能特性
 
 - **🛡️ 入群验证** — 新成员入群时自动发送数学验证题，答对才能入群
