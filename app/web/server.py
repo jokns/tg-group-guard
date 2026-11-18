@@ -16,6 +16,7 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 from app.database import get_conn, get_setting, set_setting
 from app.config import Config
 from app.audit import audit
+from app.verification_web import verification_url, turnstile_ready, telegram_identity, verify_and_claim, finish_challenge, apply_verification
 
 import pyotp
 import qrcode
@@ -34,6 +35,9 @@ def inject_csrf():
 @app.before_request
 def protect_state_changes():
     if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        return
+    # Public Mini App endpoint authenticates signed Telegram initData, not admin cookies.
+    if request.path == '/verify/api/complete':
         return
     expected = session.get('_csrf_token', '')
     supplied = request.headers.get('X-CSRF-Token', '') or request.form.get('_csrf_token', '')
@@ -374,6 +378,100 @@ def audit_page():
     c.close()
     return render_template('audit.html',rows=rows,category=category,datetime=datetime)
 
+@app.route("/verify", methods=["GET"])
+def public_verify_page():
+    if not turnstile_ready():
+        abort(503, description="验证页面尚未配置")
+    # Refuse wrong hosts; a site key must only be served from the configured domain.
+    from urllib.parse import urlparse
+    configured = urlparse(verification_url())
+    if request.host.split(":")[0].lower() != configured.hostname.lower():
+        abort(404)
+    response = app.make_response(render_template("turnstile_verify.html", site_key=get_setting("turnstile_site_key", "")))
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Content-Security-Policy"] = ("default-src 'none'; script-src 'self' 'unsafe-inline' https://telegram.org https://challenges.cloudflare.com; "
+        "frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; "
+        "style-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; img-src 'self' data: https://challenges.cloudflare.com;")
+    return response
+
+
+@app.route("/verify/api/complete", methods=["POST"])
+def complete_public_verification():
+    if not turnstile_ready():
+        return jsonify(ok=False, message="验证功能暂不可用"), 503
+    from urllib.parse import urlparse
+    configured = urlparse(verification_url())
+    if request.host.split(":")[0].lower() != configured.hostname.lower():
+        abort(404)
+    origin = request.headers.get("Origin", "")
+    if origin and origin != f"{configured.scheme}://{configured.netloc}":
+        abort(403)
+    if request.content_length and request.content_length > 16384:
+        abort(413)
+    if not request.is_json:
+        abort(415)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        abort(400)
+    try:
+        user_id = telegram_identity(data.get("init_data"))
+        challenge = data.get("challenge", "")
+        cf_token = data.get("turnstile_token", "")
+        if not isinstance(challenge, str) or len(challenge) > 128:
+            raise ValueError("验证会话无效")
+        row = verify_and_claim(user_id, challenge, cf_token)
+        try:
+            apply_verification(row, user_id)
+        except Exception:
+            finish_challenge(challenge, "failed")
+            raise
+        finish_challenge(challenge, "passed")
+        return jsonify(ok=True, message="✅ 验证成功，已完成入群审核。")
+    except ValueError as exc:
+        return jsonify(ok=False, message=str(exc)), 400
+    except Exception:
+        logger.exception("Mini App verification processing failed")
+        return jsonify(ok=False, message="服务器处理失败，请联系管理员或重新申请"), 503
+
+
+@app.route("/settings/verification", methods=["POST"])
+@login_required
+def save_verification_settings():
+    """Independent form; must not touch any other robot switches."""
+    from urllib.parse import urlparse
+    data = request.form
+    if data.get("verification_form_marker") != "web_verification":
+        abort(400)
+    mode = data.get("verification_mode", "math")
+    level = data.get("math_difficulty", "medium")
+    if mode not in ("math", "cloudflare") or level not in ("easy", "medium", "hard"):
+        abort(400)
+    url = data.get("turnstile_verify_url", "").strip().rstrip("/")
+    site_key = data.get("turnstile_site_key", "").strip()
+    secret = data.get("turnstile_secret_key", "").strip()
+    if url:
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ("", "/"):
+            flash("验证域名必须是 HTTPS 根地址，不得包含路径、参数或账户信息", "danger")
+            return redirect(url_for("settings"))
+    if len(url) > 255 or len(site_key) > 255 or len(secret) > 255:
+        abort(400)
+    final_url = url or get_setting("turnstile_verify_url", "")
+    final_site_key = site_key or get_setting("turnstile_site_key", "")
+    final_secret = secret or get_setting("turnstile_secret_key", "")
+    if mode == "cloudflare" and not (final_url and final_site_key and final_secret):
+        flash("启用 Cloudflare 前请填写验证域名、Site Key、Secret Key", "danger")
+        return redirect(url_for("settings"))
+    # All settings are validated before any write.
+    for key, value in (("verification_mode", mode), ("math_difficulty", level),
+                       ("turnstile_verify_url", final_url), ("turnstile_site_key", final_site_key),
+                       ("turnstile_secret_key", final_secret)):
+        set_setting(key, value)
+    audit("web_admin", get_client_ip(), "verification_settings_changed", mode)
+    flash("验证配置已保存，不影响其他机器人开关。新会话使用新的验证方式。", "success")
+    return redirect(url_for("settings"))
+
+
 @app.route("/settings/logs/retention", methods=["POST"])
 @login_required
 def save_log_retention_route():
@@ -581,6 +679,11 @@ def settings():
                            verify_timeout=db_verify_timeout, max_warnings=db_max_warnings,
                            mute_duration=db_mute_duration,
                            warning_limit_action=get_setting('warning_limit_action', 'ban'),
+                           verification_mode=get_setting('verification_mode', 'math'),
+                           math_difficulty=get_setting('math_difficulty', 'medium'),
+                           turnstile_verify_url=get_setting('turnstile_verify_url', ''),
+                           turnstile_site_key=get_setting('turnstile_site_key', ''),
+                           turnstile_secret_is_set=bool(get_setting('turnstile_secret_key', '')),
                            log_retention_days=get_setting('log_retention_days', '7'),
                            guard_settings={key:get_setting(key,default) for key,default in {
                              'direct_join_verify_enabled':'1','direct_verify_timeout':'300','join_approval_enabled':'1','join_approval_timeout':'300','ocr_enabled':'1','smart_ocr_enabled':'1',
