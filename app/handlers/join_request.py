@@ -374,6 +374,7 @@ async def verification_callback(update: Update, context: ContextTypes.DEFAULT_TY
         conn.commit()
         conn.close()
         
+        await query.answer("验证成功")
         await query.edit_message_text("✅ 验证通过！你现在可以在群里正常发言了。")
         from app.handlers.media_guard import mark_observation
         mark_observation(chat_id,user_id)
